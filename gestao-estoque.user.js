@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gestão de Estoque
 // @namespace    http://tampermonkey.net/
-// @version      1.0.4
+// @version      1.0.5
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
@@ -991,10 +991,6 @@ end $$;`;
             const cells = row.cells; // HTMLCollection nativa: mais rápida que querySelectorAll
             if (!cells || cells.length === 0) continue;
 
-            // Ignora linhas dentro de modais/diálogos externos à página (ex: modal de filiais),
-            // pois mutar o DOM deles em loop causava o bug de modal ficando em branco.
-            if (row.closest('[role="dialog"], .modal, [class*="modal" i]')) continue;
-
             const table = row.closest('table');
             const stockIdx = getStockColIndex(table, stockColCache);
             if (stockIdx === -1) continue; // Sem coluna "Estoque" reconhecida: não é a tabela alvo, pula
@@ -1142,7 +1138,7 @@ end $$;`;
             } else {
                 if (runTradeAnalysis(false)) {
                     e.target.textContent = '⏸️ Parar Análise'; e.target.style.backgroundColor = '#ef4444';
-                    tradeInterval = setInterval(() => { runTradeAnalysis(true); }, 400);
+                    tradeInterval = setInterval(() => { runTradeAnalysis(true); }, 100);
                 }
             }
         }
