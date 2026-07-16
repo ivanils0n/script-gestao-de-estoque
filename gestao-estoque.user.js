@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gestão de Estoque
 // @namespace    http://tampermonkey.net/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
@@ -22,8 +22,9 @@
         #tm-content-wrapper { transition: margin-right 0.28s cubic-bezier(0.4, 0, 0.2, 1); margin-right: 0; }
         #tm-content-wrapper.tm-pushed { margin-right: 380px; }
 
-        #tm-manager-btn { position: fixed; top: 50%; right: 16px; transform: translateY(-50%); z-index: 999999999; width: 48px; height: 48px; border-radius: 50%; background-color: #ffffff; color: #0f172a; border: none; box-shadow: 0 4px 14px rgba(0,0,0,0.18); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 22px; opacity: 0.8; transition: opacity 0.25s ease, transform 0.25s ease, right 0.28s cubic-bezier(0.4, 0, 0.2, 1); user-select: none; }
-        #tm-manager-btn:hover { opacity: 1; transform: translateY(-50%) scale(1.08); }
+        #tm-manager-btn { position: fixed; top: 50%; right: 16px; z-index: 999999999; width: 48px; height: 48px; border-radius: 50%; background-color: #ffffff; color: #0f172a; border: none; box-shadow: 0 4px 14px rgba(0,0,0,0.18); cursor: grab; display: flex; align-items: center; justify-content: center; font-size: 22px; opacity: 0.8; transition: opacity 0.25s ease, right 0.28s cubic-bezier(0.4, 0, 0.2, 1); user-select: none; touch-action: none; }
+        #tm-manager-btn:hover { opacity: 1; }
+        #tm-manager-btn.dragging { opacity: 1; cursor: grabbing; transition: none; box-shadow: 0 6px 20px rgba(0,0,0,0.28); }
         #tm-manager-btn.closed-state { right: 16px; }
         #tm-manager-btn.open-state { right: 396px; }
 
@@ -107,9 +108,25 @@
         .tm-btn-cancel { background: #e2e8f0; color: #334155; transition: background 0.2s; }
         .tm-btn-cancel:hover { background: #cbd5e1; }
 
-        .tm-cfg-label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; font-weight: 500; }
-        .tm-cfg-input, .tm-cfg-select { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #cbd5e1; margin-bottom: 12px; box-sizing: border-box; font-size: 13px; }
+        .tm-cfg-label { display: block; font-size: 12px; color: #64748b; margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+        .tm-cfg-input, .tm-cfg-select { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 14px; box-sizing: border-box; font-size: 13px; background: #ffffff; transition: border-color 0.2s, box-shadow 0.2s; }
+        .tm-cfg-input:focus, .tm-cfg-select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12); }
+        .tm-cfg-input:disabled { background: #f1f5f9; color: #64748b; cursor: not-allowed; border-style: dashed; }
         .tm-sql-box { width: 100%; height: 220px; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 6px; border: 1px solid #cbd5e1; box-sizing: border-box; resize: none; }
+
+        #tm-config-modal .tm-modal-content { width: 380px; text-align: left; padding: 0; overflow: hidden; }
+        .tm-cfg-header { background: #0f172a; color: #fff; padding: 18px 24px; display: flex; align-items: center; gap: 10px; }
+        .tm-cfg-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+        .tm-cfg-body { padding: 22px 24px 6px; }
+        .tm-cfg-section { margin-bottom: 16px; }
+        .tm-cfg-status { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600; margin-bottom: 16px; }
+        .tm-cfg-status.on { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+        .tm-cfg-status.off { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+        .tm-cfg-divider { border: none; border-top: 1px solid #e2e8f0; margin: 4px 0 16px; }
+        .tm-cfg-actions-secondary { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
+        .tm-cfg-actions-secondary button { width: 100%; border: none; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; transition: filter 0.2s; }
+        .tm-cfg-actions-secondary button:hover { filter: brightness(0.95); }
+        #tm-config-modal .tm-modal-actions { padding: 16px 24px 22px; margin: 0; }
 
         @keyframes slideInNotify { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     `);
@@ -365,6 +382,50 @@ end $$;`;
     toggleBtn.innerHTML = '📦';
     toggleBtn.title = 'Gestão de Estoque';
     body.appendChild(toggleBtn);
+
+    // Posição vertical salva (arraste pela lateral)
+    const savedBtnTop = GM_getValue('tm_btn_top', null);
+    toggleBtn.style.top = (savedBtnTop !== null ? savedBtnTop : (window.innerHeight / 2 - 24)) + 'px';
+
+    // --- Arrastar o botão flutuante verticalmente pela lateral ---
+    (() => {
+        let dragging = false, moved = false, startY = 0, startTop = 0;
+        const MARGIN = 8;
+
+        const onMove = (clientY) => {
+            const delta = clientY - startY;
+            if (Math.abs(delta) > 3) moved = true;
+            let newTop = startTop + delta;
+            newTop = Math.max(MARGIN, Math.min(window.innerHeight - 48 - MARGIN, newTop));
+            toggleBtn.style.top = newTop + 'px';
+        };
+
+        const onDown = (clientY) => {
+            dragging = true;
+            moved = false;
+            startY = clientY;
+            startTop = parseFloat(toggleBtn.style.top) || 0;
+            toggleBtn.classList.add('dragging');
+        };
+
+        const onUp = () => {
+            if (!dragging) return;
+            dragging = false;
+            toggleBtn.classList.remove('dragging');
+            if (moved) GM_setValue('tm_btn_top', parseFloat(toggleBtn.style.top) || 0);
+        };
+
+        toggleBtn.addEventListener('mousedown', (e) => { onDown(e.clientY); e.preventDefault(); });
+        document.addEventListener('mousemove', (e) => { if (dragging) onMove(e.clientY); });
+        document.addEventListener('mouseup', onUp);
+
+        toggleBtn.addEventListener('touchstart', (e) => { onDown(e.touches[0].clientY); }, { passive: true });
+        document.addEventListener('touchmove', (e) => { if (dragging) onMove(e.touches[0].clientY); }, { passive: true });
+        document.addEventListener('touchend', onUp);
+
+        // Bloqueia o clique de abrir/fechar caso tenha havido arraste
+        toggleBtn.addEventListener('click', (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); } }, true);
+    })();
 
     // Botão fixo na borda direita: clique abre/fecha a sidebar e empurra o conteúdo da página
     toggleBtn.addEventListener('click', () => {
@@ -629,27 +690,40 @@ end $$;`;
     // --- Configurações (Modo Local/Supabase) ---
     function showConfigModal() {
         const cfg = getConfig();
+        const isConnected = cfg.mode === 'supabase' && cfg.supabaseUrl && cfg.supabaseKey;
         const overlay = document.createElement('div');
         overlay.id = 'tm-config-modal';
         overlay.innerHTML = `
-            <div class="tm-modal-content" style="width: 340px; text-align: left;">
-                <h3 style="text-align:center;">⚙️ Configurações</h3>
-                <label class="tm-cfg-label">Modo de Armazenamento</label>
-                <select id="cfg-mode" class="tm-cfg-select">
-                    <option value="local" ${cfg.mode === 'local' ? 'selected' : ''}>Local (neste navegador)</option>
-                    <option value="supabase" ${cfg.mode === 'supabase' ? 'selected' : ''}>Supabase (nuvem)</option>
-                </select>
-                <div id="cfg-supabase-fields" style="display:${cfg.mode === 'supabase' ? 'block' : 'none'};">
-                    <label class="tm-cfg-label">URL do Projeto Supabase</label>
-                    <input type="password" autocomplete="new-password" id="cfg-url" class="tm-cfg-input" placeholder="https://xxxx.supabase.co" value="${cfg.supabaseUrl || ''}">
-                    <label class="tm-cfg-label">Chave Anon/Public</label>
-                    <input type="password" autocomplete="new-password" id="cfg-key" class="tm-cfg-input" placeholder="eyJhbGciOi..." value="${cfg.supabaseKey || ''}">
-                    <button type="button" id="cfg-view-sql" style="background:#64748b; color:#fff; width:100%; margin-bottom:12px;">📋 Ver Script SQL das Tabelas</button>
-                    ${cfg.mode === 'supabase' && cfg.supabaseUrl && cfg.supabaseKey ? '<button type="button" id="cfg-disconnect" style="background:#ef4444; color:#fff; width:100%; margin-bottom:12px;">🔌 Desconectar Banco de Dados</button>' : ''}
+            <div class="tm-modal-content">
+                <div class="tm-cfg-header"><span style="font-size:18px;">⚙️</span><h3>Configurações</h3></div>
+                <div class="tm-cfg-body">
+                    <div class="tm-cfg-status ${isConnected ? 'on' : 'off'}">
+                        ${isConnected ? '🟢 Conectado ao Supabase (nuvem)' : '⚪ Modo Local (neste navegador)'}
+                    </div>
+                    <div class="tm-cfg-section">
+                        <label class="tm-cfg-label">Modo de Armazenamento</label>
+                        <select id="cfg-mode" class="tm-cfg-select" ${isConnected ? 'disabled' : ''}>
+                            <option value="local" ${cfg.mode === 'local' ? 'selected' : ''}>Local (neste navegador)</option>
+                            <option value="supabase" ${cfg.mode === 'supabase' ? 'selected' : ''}>Supabase (nuvem)</option>
+                        </select>
+                    </div>
+                    <div id="cfg-supabase-fields" style="display:${cfg.mode === 'supabase' ? 'block' : 'none'};">
+                        <div class="tm-cfg-section">
+                            <label class="tm-cfg-label">URL do Projeto Supabase</label>
+                            <input type="password" autocomplete="new-password" id="cfg-url" class="tm-cfg-input" placeholder="https://xxxx.supabase.co" value="${cfg.supabaseUrl || ''}" ${isConnected ? 'disabled' : ''}>
+                            <label class="tm-cfg-label">Chave Anon/Public</label>
+                            <input type="password" autocomplete="new-password" id="cfg-key" class="tm-cfg-input" placeholder="eyJhbGciOi..." value="${cfg.supabaseKey || ''}" ${isConnected ? 'disabled' : ''}>
+                        </div>
+                        <hr class="tm-cfg-divider">
+                        <div class="tm-cfg-actions-secondary">
+                            <button type="button" id="cfg-view-sql" style="background:#64748b; color:#fff;">📋 Ver Script SQL das Tabelas</button>
+                            ${isConnected ? '<button type="button" id="cfg-disconnect" style="background:#ef4444; color:#fff;">🔌 Desconectar Banco de Dados</button>' : ''}
+                        </div>
+                    </div>
                 </div>
                 <div class="tm-modal-actions">
                     <button class="tm-modal-btn tm-btn-cancel" id="cfg-cancel">Cancelar</button>
-                    <button class="tm-modal-btn tm-btn-confirm" id="cfg-save">Salvar</button>
+                    <button class="tm-modal-btn tm-btn-confirm" id="cfg-save" ${isConnected ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>Salvar</button>
                 </div>
             </div>`;
         body.appendChild(overlay);
@@ -674,18 +748,20 @@ end $$;`;
             }, "Desconectar", true);
         });
 
-        document.getElementById('cfg-save').addEventListener('click', () => {
-            const newCfg = {
-                mode: modeSelect.value,
-                supabaseUrl: document.getElementById('cfg-url').value.trim(),
-                supabaseKey: document.getElementById('cfg-key').value.trim()
-            };
-            saveConfig(newCfg);
-            overlay.remove();
-            showToast("✅ Configurações Salvas", "As alterações foram aplicadas.", "#10b981");
-            setupRealtime(newCfg);
-            if (newCfg.mode === 'supabase' && newCfg.supabaseUrl && newCfg.supabaseKey) supaSyncAll(true, true);
-        });
+        if (!isConnected) {
+            document.getElementById('cfg-save').addEventListener('click', () => {
+                const newCfg = {
+                    mode: modeSelect.value,
+                    supabaseUrl: document.getElementById('cfg-url').value.trim(),
+                    supabaseKey: document.getElementById('cfg-key').value.trim()
+                };
+                saveConfig(newCfg);
+                overlay.remove();
+                showToast("✅ Configurações Salvas", "As alterações foram aplicadas.", "#10b981");
+                setupRealtime(newCfg);
+                if (newCfg.mode === 'supabase' && newCfg.supabaseUrl && newCfg.supabaseKey) supaSyncAll(true, true);
+            });
+        }
     }
 
     function showSqlModal() {
