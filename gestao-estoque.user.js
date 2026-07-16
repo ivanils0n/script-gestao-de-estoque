@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gestão de Estoque
 // @namespace    http://tampermonkey.net/
-// @version      1.0.5
+// @version      1.0.6
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
@@ -132,8 +132,17 @@
         #tm-config-modal .tm-modal-actions { padding: 14px 24px 22px; margin: 0; }
         .tm-modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        @keyframes slideInNotify { from { transform: translateX(-120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+       @keyframes slideInNotify { from { transform: translateX(-120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes slideOutNotify { from { transform: translateX(0); opacity: 1; } to { transform: translateX(-120%); opacity: 0; } }
+
+        /* --- Estilos do Pop-up Flutuante (Pin) --- */
+        .tm-floating-pin { position: fixed; top: 120px; right: 400px; width: 280px; background: #ffffff; border: 1px solid #fcd34d; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); z-index: 999999999; font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; overflow: hidden; }
+        .tm-pin-header { background: #fef3c7; color: #92400e; padding: 10px 15px; cursor: grab; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #fde68a; user-select: none; font-size: 13px; font-weight: bold; }
+        .tm-pin-header:active { cursor: grabbing; }
+        .tm-pin-body { padding: 12px 15px; font-size: 13px; color: #334155; max-height: 250px; overflow-y: auto; line-height: 1.4; }
+        .tm-pin-body p { margin: 0; white-space: pre-wrap; }
+        .tm-pin-close { background: none; border: none; font-size: 14px; cursor: pointer; color: #b45309; padding: 0; margin: 0; transition: color 0.2s; }
+        .tm-pin-close:hover { color: #78350f; font-weight: bold; }
     `);
 
     // --- Core Functions e Banco de Dados ---
@@ -533,7 +542,7 @@ end $$;`;
     });
 
     let activeTab = 'encomendas', editingId = null, selectedIds = new Set(), searchQuery = "";
-    let hideUndated = false, dateFrom = isoDateOffset(-5), dateTo = isoDateOffset(5), tradeInterval = null;
+    let hideUndated = false, showOnlyAlwaysActive = false, dateFrom = isoDateOffset(-5), dateTo = isoDateOffset(5), tradeInterval = null;
 
     // Duração (ms) sincronizada com as transições CSS de #tm-manager-panel e #tm-history-panel
     const PANEL_ANIM_MS = 250;
@@ -1080,18 +1089,27 @@ end $$;`;
             const countLojas = document.getElementById('tm-count-lojas');
             const countQtds = document.getElementById('tm-count-qtds');
             const countNonEmptyLines = (val) => val.split('\n').filter(l => l.trim() !== '').length;
+
             const updateCounts = () => {
                 if (countLojas) countLojas.textContent = `(${countNonEmptyLines(tl.value)})`;
                 if (countQtds) countQtds.textContent = `(${countNonEmptyLines(tq.value)})`;
+
+                // NOVO: Salva no cache sempre que você digitar qualquer coisa
+                GM_setValue('tm_trade_cache', {
+                    lojas: tl.value,
+                    qtds: tq.value,
+                    timestamp: Date.now()
+                });
             };
+
             if (tl && tq) {
                 // Sincroniza Scroll do Trade
                 tl.addEventListener('scroll', () => { tq.scrollTop = tl.scrollTop; });
                 tq.addEventListener('scroll', () => { tl.scrollTop = tq.scrollTop; });
-                // Contagem de linhas preenchidas em cada coluna
+                // Contagem de linhas preenchidas em cada coluna e auto-save
                 tl.addEventListener('input', updateCounts);
                 tq.addEventListener('input', updateCounts);
-                updateCounts();
+                updateCounts(); // Executa na abertura para carregar as contagens
             }
         }
     }
@@ -1101,6 +1119,15 @@ end $$;`;
         const btnEdit = e.target.closest('.tm-btn-edit');
         if (btnEdit) { editingId = btnEdit.dataset.id; return render(); }
         if (e.target.id === 'enc-cancel' || e.target.id === 'obs-cancel') { editingId = null; return render(); }
+
+        // Ação do Botão Fixar
+        const btnPin = e.target.closest('.tm-btn-pin');
+        if (btnPin) {
+            const id = btnPin.dataset.id;
+            const item = db.observacoes.find(o => String(o.id) === String(id));
+            if (item) createFloatingPin(item);
+            return;
+        }
 
         const btnDel = e.target.closest('.single-delete');
         if (btnDel) {
@@ -1166,12 +1193,14 @@ end $$;`;
 
         if (e.target.id === 'trade-start') {
             if (tradeInterval) {
-                clearInterval(tradeInterval); tradeInterval = null; clearTradeHighlights();
+                clearInterval(tradeInterval);
+                tradeInterval = null; clearTradeHighlights();
                 e.target.textContent = 'Iniciar Análise'; e.target.style.backgroundColor = '#10b981';
             } else {
                 if (runTradeAnalysis(false)) {
-                    e.target.textContent = '⏸️ Parar Análise'; e.target.style.backgroundColor = '#ef4444';
-                    tradeInterval = setInterval(() => { runTradeAnalysis(true); }, 100);
+                    e.target.textContent = '⏸️ Parar Análise';
+                    e.target.style.backgroundColor = '#ef4444';
+                    tradeInterval = setInterval(() => { runTradeAnalysis(true); }, 400);
                 }
             }
         }
@@ -1196,12 +1225,67 @@ end $$;`;
             updateDeleteBtnState();
         }
         if (e.target.id === 'tm-toggle-undated') { hideUndated = e.target.checked; return render(); }
+        if (e.target.id === 'tm-toggle-always-active') { showOnlyAlwaysActive = e.target.checked; return render(); }
         if (e.target.classList.contains('tm-notify-check')) {
             const id = String(e.target.dataset.id);
             const item = db.observacoes.find(o => String(o.id) === id);
             if (item) { item.notify = e.target.checked; saveDB(); supaUpsert('observacoes', item); }
         }
     });
+
+    // --- Função do Pop-up Flutuante (Arrastável) ---
+    function createFloatingPin(item) {
+        if (document.getElementById(`tm-pin-${item.id}`)) return; // Evita abrir repetido
+
+        const pin = document.createElement('div');
+        pin.id = `tm-pin-${item.id}`;
+        pin.className = 'tm-floating-pin';
+        pin.innerHTML = `
+            <div class="tm-pin-header" title="Clique e segure para arrastar">
+                <strong style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;">📌 ${item.titulo || 'Observação'}</strong>
+                <button class="tm-pin-close" title="Fechar">✕</button>
+            </div>
+            <div class="tm-pin-body">
+                <p>${item.desc ? item.desc : '<i>Sem detalhes informados...</i>'}</p>
+            </div>
+        `;
+        document.body.appendChild(pin);
+
+        pin.querySelector('.tm-pin-close').addEventListener('click', () => pin.remove());
+
+        const header = pin.querySelector('.tm-pin-header');
+        let isDragging = false, startX, startY, initialX, initialY;
+
+        const onMouseMove = (e) => {
+            if (!isDragging) return;
+            pin.style.left = `${initialX + (e.clientX - startX)}px`;
+            pin.style.top = `${initialY + (e.clientY - startY)}px`;
+            pin.style.bottom = 'auto';
+            pin.style.right = 'auto';
+        };
+
+        const onMouseUp = () => {
+            isDragging = false;
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        header.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            const rect = pin.getBoundingClientRect();
+            initialX = rect.left;
+            initialY = rect.top;
+
+            document.querySelectorAll('.tm-floating-pin').forEach(p => p.style.zIndex = '999999998');
+            pin.style.zIndex = '999999999';
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            e.preventDefault();
+        });
+    }
 
     function updateDeleteBtnState() {
         const btn = document.getElementById('tm-delete-selected');
@@ -1253,7 +1337,7 @@ end $$;`;
                             <p><strong>Produto:</strong> ${item.produto || '-'} (x${item.qtd || '0'})</p>
                             ${item.ean ? `<p><strong>EAN:</strong> ${item.ean}</p>` : ''}
                             ${item.data ? `<p><strong>Data:</strong> ${dataFormatada}</p>` : ''}
-                            <div class="tm-card-actions"><button class="tm-btn-small tm-btn-edit" data-id="${item.id}">Editar</button><button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">Excluir</button></div>
+                            <div class="tm-card-actions"><button class="tm-btn-small tm-btn-edit" data-id="${item.id}">✏️</button><button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">🗑️</button></div>
                         </div>
                     </div>`;
             });
@@ -1281,11 +1365,24 @@ end $$;`;
             </div>` + (isExpanded ? '' : buildFilterBarHTML("Buscar por título ou descrição..."));
     }
 
-    function buildObsListHTML() {
+   function buildObsListHTML() {
         let listHTML = (isExpanded ? buildFilterBarHTML("Buscar por título ou descrição...") : '') +
-            `<div class="tm-list-container"><div class="tm-list-header"><label><input type="checkbox" id="tm-select-all"> Marcar Todos</label><div style="display:flex; gap:12px; align-items:center;"><label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:500; color:#475569;" title="Itens sem data e sem repetição semanal ignoram o filtro de data"><input type="checkbox" id="tm-toggle-undated" ${hideUndated ? 'checked' : ''}> ${hideUndated ? 'Reexibir' : 'Ocultar'}</label><button id="tm-delete-selected" class="tm-btn-small tm-btn-del" style="display:none;">Excluir Selecionados</button></div></div><div class="tm-list" id="tm-items-list">`;
-        if (db.observacoes.length === 0) { listHTML += '<p id="tm-empty-msg" style="text-align:center; color:#94a3b8; font-size:13px; margin-top:20px;">Nenhuma observação.</p>'; }
-        else {
+            `<div class="tm-list-container">
+                <div class="tm-list-header">
+                    <label><input type="checkbox" id="tm-select-all"> Marcar Todos</label>
+                    <div style="display:flex; gap:12px; align-items:center;">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:500; color:#475569;" title="Mostrar apenas registros Sempre Ativos">
+                            <input type="checkbox" id="tm-toggle-always-active" ${showOnlyAlwaysActive ? 'checked' : ''}> Só 'Sempre Ativo'
+                        </label>
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:500; color:#475569;" title="Itens sem data e sem repetição semanal ignoram o filtro de data">
+                            <input type="checkbox" id="tm-toggle-undated" ${hideUndated ? 'checked' : ''}> ${hideUndated ? 'Reexibir "Sempre Ativo"' : 'Ocultar "Sempre Ativo"'}
+                        </label>
+                        <button id="tm-delete-selected" class="tm-btn-small tm-btn-del" style="display:none;">Excluir Selecionados</button>
+                    </div>
+                </div>
+                <div class="tm-list" id="tm-items-list">`;
+        if (db.observacoes.length === 0) { listHTML += '<p id="tm-empty-msg" style="text-align:center; color:#94a3b8; font-size:13px; margin-top:20px;">Nenhuma observação.</p>';
+        } else {
             db.observacoes.forEach(item => {
                 let dataFormatada = item.data; try { const [a, m, d] = String(item.data || '').split('-'); if(d) dataFormatada = `${d}/${m}/${a}`; } catch(e){}
                 const isChecked = selectedIds.has(String(item.id)) ? 'checked' : '';
@@ -1297,7 +1394,11 @@ end $$;`;
                             <h4 style="padding-right:20px;">${item.titulo || 'Sem Assunto'}</h4>
                             ${item.notify_weekday ? `<p><strong>Repetição:</strong> Toda ${WEEKDAY_LABELS[item.notify_weekday]}</p>` : `<p><strong>Data:</strong> ${dataFormatada || 'Sempre ativo'}</p>`}
                             ${item.desc ? `<p><strong>Obs:</strong> ${item.desc}</p>` : ''}
-                            <div class="tm-card-actions"><button class="tm-btn-small tm-btn-edit" data-id="${item.id}">Editar</button><button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">Excluir</button></div>
+                            <div class="tm-card-actions">
+                                <button class="tm-btn-small tm-btn-pin" data-id="${item.id}" style="background-color: #8b5cf6;" title="Fixar na tela">📌</button>
+                                <button class="tm-btn-small tm-btn-edit" data-id="${item.id}">✏️</button>
+                                <button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">🗑️</button>
+                            </div>
                         </div>
                     </div>`;
             });
@@ -1307,18 +1408,29 @@ end $$;`;
 
     function buildTradeFormHTML() {
         const isRunning = !!tradeInterval;
+
+        // --- LÓGICA DE CACHE TEMPORÁRIO (5 MINUTOS) ---
+        let tradeCache = GM_getValue('tm_trade_cache', { lojas: '', qtds: '', timestamp: 0 });
+        const CACHE_EXPIRATION = 5 * 60 * 1000; // 5 minutos em milissegundos
+
+        // Verifica se o tempo passou de 5 minutos desde a última digitação
+        if (Date.now() - tradeCache.timestamp > CACHE_EXPIRATION) {
+            tradeCache = { lojas: '', qtds: '', timestamp: 0 };
+            GM_setValue('tm_trade_cache', tradeCache); // Limpa o cache vencido
+        }
+
         return `
             <div class="tm-form" style="gap: 8px;">
-                <strong style="color:#10b981;">Trade Analytics (Local)</strong>
+                <strong style="color:#10b981;">Trade Analytics (Local) <span style="font-size: 11px; color:#64748b; font-weight:normal;">(Auto-save 5 min)</span></strong>
                 <p style="font-size: 12px; color: #64748b; margin: 0 0 4px 0;">As linhas de lojas e quantidades rolam juntas. Pule as linhas (Enter) para bater a QTD exatamente com a linha da sua Loja.</p>
                 <div style="display: flex; gap: 10px;">
                     <div style="flex: 1; display: flex; flex-direction: column;">
                         <label style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #475569;">Coluna Lojas <span id="tm-count-lojas" style="font-weight:normal; color:#64748b;">(0)</span></label>
-                        <textarea id="trade-lojas" class="tm-trade-sync" placeholder="PVH 1\\n\\nJAR 2" rows="12" style="background-color: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; box-sizing: border-box; width: 100%;"></textarea>
+                        <textarea id="trade-lojas" class="tm-trade-sync" placeholder="PVH 1\\n\\nJAR 2" rows="12" style="background-color: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; box-sizing: border-box; width: 100%;">${tradeCache.lojas || ''}</textarea>
                     </div>
                     <div style="flex: 1; display: flex; flex-direction: column;">
                         <label style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #475569;">Coluna Qtds <span id="tm-count-qtds" style="font-weight:normal; color:#64748b;">(0)</span></label>
-                        <textarea id="trade-qtds" class="tm-trade-sync" placeholder="15\\n\\n5" rows="12" style="background-color: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; box-sizing: border-box; width: 100%;"></textarea>
+                        <textarea id="trade-qtds" class="tm-trade-sync" placeholder="15\\n\\n5" rows="12" style="background-color: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; box-sizing: border-box; width: 100%;">${tradeCache.qtds || ''}</textarea>
                     </div>
                 </div>
                 <button id="trade-start" style="background-color: ${isRunning ? '#ef4444' : '#10b981'}; color: white; margin-top: 6px;">${isRunning ? 'Parar Análise' : 'Iniciar Análise'}</button>
@@ -1363,14 +1475,23 @@ end $$;`;
             if (searchQuery) visible = card.innerText.toLowerCase().includes(searchQuery);
 
             const hasDate = !!(item && item.data);
-            if (!hasDate) {
-                if (hideUndated) visible = false;
-            } else if (visible && item && (dateFrom || dateTo)) {
-                const d = item.data || '';
-                if (!d) { visible = false; }
-                else {
-                    if (dateFrom && d < dateFrom) visible = false;
-                    if (dateTo && d > dateTo) visible = false;
+
+            // Nova lógica: Filtro Exclusivo "Sempre Ativo"
+            if (activeTab === 'observacoes' && showOnlyAlwaysActive) {
+                // Considera 'Sempre Ativo' quem não tem data E não tem repetição semanal
+                const isSempreAtivo = !hasDate && !(item && item.notify_weekday);
+                if (!isSempreAtivo) visible = false;
+            } else {
+                // Lógica de Datas Original
+                if (!hasDate) {
+                    if (hideUndated) visible = false;
+                } else if (visible && item && (dateFrom || dateTo)) {
+                    const d = item.data || '';
+                    if (!d) { visible = false; }
+                    else {
+                        if (dateFrom && d < dateFrom) visible = false;
+                        if (dateTo && d > dateTo) visible = false;
+                    }
                 }
             }
 
