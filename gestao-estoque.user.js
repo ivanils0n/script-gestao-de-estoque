@@ -5,8 +5,8 @@
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
-// @updateURL    https://raw.githubusercontent.com/ivanils0n/script-gestao-de-estoque/main/gestao-estoque.user.js
-// @downloadURL  https://raw.githubusercontent.com/ivanils0n/script-gestao-de-estoque/main/gestao-estoque.user.js
+// @updateURL    https://raw.githubusercontent.com/ivanils0n/script-gestao-de-estoque/refs/heads/main/gestao-estoque.user.js
+// @downloadURL  https://raw.githubusercontent.com/ivanils0n/script-gestao-de-estoque/refs/heads/main/gestao-estoque.user.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js
 // @require      https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js
 // @grant        GM_setValue
