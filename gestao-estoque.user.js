@@ -813,14 +813,27 @@ end $$;`;
         }
         showConfirmModal("📥 Importar Planilha?", `Foram encontrados ${rows.length} registros para importar na aba atual.`, () => {
             const imported = [];
+            let ignorados = 0; // Contador para saber quantos foram cortados
+
             rows.forEach(row => {
                 let record;
+                // Tenta pegar o ID da planilha. Se não tiver, gera um novo.
+                const rowId = getFieldValue(row, 'id');
+                const finalId = rowId ? rowId : generateUniqueId();
+
                 if (activeTab === 'encomendas') {
+                    // Verifica se o ID já existe no banco de encomendas
+                    if (db.encomendas.find(e => String(e.id) === String(finalId))) {
+                        ignorados++;
+                        return; // Corta (pula) este registro
+                    }
+
                     const loja = getFieldValue(row, 'loja');
                     const produto = getFieldValue(row, 'produto');
                     if (!loja && !produto) return;
+
                     record = {
-                        id: generateUniqueId(),
+                        id: finalId,
                         loja, produto,
                         ean: getFieldValue(row, 'ean'),
                         qtd: getFieldValue(row, 'qtd', 'quantidade'),
@@ -828,10 +841,17 @@ end $$;`;
                     };
                     db.encomendas.unshift(record);
                 } else {
+                    // Verifica se o ID já existe no banco de observações
+                    if (db.observacoes.find(o => String(o.id) === String(finalId))) {
+                        ignorados++;
+                        return; // Corta (pula) este registro
+                    }
+
                     const titulo = getFieldValue(row, 'titulo', 'título', 'assunto');
                     if (!titulo) return;
+
                     record = {
-                        id: generateUniqueId(),
+                        id: finalId,
                         titulo,
                         data: getFieldValue(row, 'data') || null,
                         notify_weekday: getFieldValue(row, 'notify_weekday', 'repeticao', 'repetição') || null,
@@ -842,9 +862,17 @@ end $$;`;
                 }
                 imported.push(record);
             });
-            saveDB(); render();
+
+            saveDB();
+            render();
             if (imported.length > 0) supaUpsert(activeTab, imported);
-            showToast("✅ Importação Concluída", `${imported.length} registros importados com sucesso.`, "#10b981");
+
+            // Mostra o resultado final com a quantidade de ignorados
+            if (ignorados > 0) {
+                showToast("✅ Importação Concluída", `${imported.length} importados. ${ignorados} ignorados (já existiam).`, "#10b981");
+            } else {
+                showToast("✅ Importação Concluída", `${imported.length} registros importados com sucesso.`, "#10b981");
+            }
         }, "Importar", false);
     }
 
@@ -858,10 +886,13 @@ end $$;`;
             showToast("⚠️ Nada para Exportar", "Não há registros nesta aba.", "#ef4444");
             return;
         }
+
+        // Agora o 'ID' é a primeira coluna a ser exportada
         const rows = items.map(item => activeTab === 'encomendas'
-            ? { Loja: item.loja, Produto: item.produto, EAN: item.ean, Qtd: item.qtd, Data: item.data }
-            : { Titulo: item.titulo, Data: item.data, Repeticao: item.notify_weekday, Descricao: item.desc, Notificar: item.notify ? 'Sim' : 'Não' }
+            ? { ID: item.id, Loja: item.loja, Produto: item.produto, EAN: item.ean, Qtd: item.qtd, Data: item.data }
+            : { ID: item.id, Titulo: item.titulo, Data: item.data, Repeticao: item.notify_weekday, Descricao: item.desc, Notificar: item.notify ? 'Sim' : 'Não' }
         );
+
         const ws = XLSX.utils.json_to_sheet(rows);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, activeTab === 'encomendas' ? 'Encomendas' : 'Observacoes');
