@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gestão de Estoque
 // @namespace    http://tampermonkey.net/
-// @version      1.0.3
+// @version      1.0.4
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
@@ -85,9 +85,9 @@
 
         .tm-notify-check { position: absolute; top: 12px; right: 12px; cursor: pointer; width: 18px; height: 18px; accent-color: #f59e0b; }
 
-        /* Ajuste nas notificações (Canto inferior esquerdo e empilhamento fluido) */
-        #tm-notification-wrapper { position: fixed; bottom: 20px; left: 20px; z-index: 999999999; display: flex; flex-direction: column-reverse; gap: 10px; font-family: system-ui, sans-serif; }
-        .tm-alert-card { background: #ffffff; border-left: 5px solid #f59e0b; box-shadow: 0 10px 25px rgba(0,0,0,0.2); padding: 15px 20px; border-radius: 8px; width: 320px; position: relative; animation: slideInNotify 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transition: opacity 0.3s ease, transform 0.3s ease; }
+        #tm-notification-wrapper { position: fixed; bottom: 20px; left: 20px; z-index: 999999999; display: flex; flex-direction: column; gap: 10px; font-family: system-ui, sans-serif; }
+        .tm-alert-card { background: #ffffff; border-left: 5px solid #f59e0b; box-shadow: 0 10px 25px rgba(0,0,0,0.2); padding: 15px 20px; border-radius: 8px; width: 320px; position: relative; animation: slideInNotify 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .tm-alert-card.tm-alert-out { animation: slideOutNotify 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
         .tm-alert-close { position: absolute; top: 10px; right: 10px; background: none; border: none; font-size: 16px; cursor: pointer; color: #94a3b8; }
         .tm-alert-close:hover { color: #ef4444; }
         .tm-toast-body { transition: background 0.2s; padding: 5px; border-radius: 6px; margin-top: -5px; }
@@ -98,7 +98,6 @@
         .tm-trade-sync { line-height: 24px !important; padding-top: 4px !important; padding-bottom: 4px !important; background-image: repeating-linear-gradient(transparent, transparent 23px, #e2e8f0 23px, #e2e8f0 24px) !important; background-attachment: local !important; }
 
         #tm-confirm-modal, #tm-config-modal, #tm-sql-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.6); z-index: 999999999; display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
-        #tm-sql-modal { z-index: 999999999; }
         .tm-modal-content { background: #ffffff; padding: 25px; border-radius: 12px; width: 360px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.3); border: 1px solid #e2e8f0; }
         .tm-modal-content h3 { margin: 0 0 12px 0; color: #0f172a; font-size: 18px; }
         .tm-modal-content p { color: #475569; font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
@@ -109,27 +108,30 @@
         .tm-btn-cancel { background: #e2e8f0; color: #334155; transition: background 0.2s; }
         .tm-btn-cancel:hover { background: #cbd5e1; }
 
-        .tm-cfg-label { display: block; font-size: 12px; color: #64748b; margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
-        .tm-cfg-input, .tm-cfg-select { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 14px; box-sizing: border-box; font-size: 13px; background: #ffffff; transition: border-color 0.2s, box-shadow 0.2s; }
-        .tm-cfg-input:focus, .tm-cfg-select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12); }
-        .tm-cfg-input:disabled { background: #f1f5f9; color: #64748b; cursor: not-allowed; border-style: dashed; }
+        .tm-cfg-label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+        .tm-cfg-input, .tm-cfg-select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #e2e8f0; margin-bottom: 14px; box-sizing: border-box; font-size: 13px; background: #f8fafc; transition: border-color 0.2s, box-shadow 0.2s, background 0.2s; }
+        .tm-cfg-input:focus, .tm-cfg-select:focus { outline: none; border-color: #94a3b8; background: #ffffff; box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.06); }
+        .tm-cfg-input:disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; border-style: dashed; }
         .tm-sql-box { width: 100%; height: 220px; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 6px; border: 1px solid #cbd5e1; box-sizing: border-box; resize: none; }
 
-        #tm-config-modal .tm-modal-content { width: 380px; text-align: left; padding: 0; overflow: hidden; }
-        .tm-cfg-header { background: #0f172a; color: #fff; padding: 18px 24px; display: flex; align-items: center; gap: 10px; }
-        .tm-cfg-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
-        .tm-cfg-body { padding: 22px 24px 6px; }
-        .tm-cfg-section { margin-bottom: 16px; }
-        .tm-cfg-status { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600; margin-bottom: 16px; }
-        .tm-cfg-status.on { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
-        .tm-cfg-status.off { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
-        .tm-cfg-divider { border: none; border-top: 1px solid #e2e8f0; margin: 4px 0 16px; }
+        #tm-config-modal .tm-modal-content { width: 380px; text-align: left; padding: 0; overflow: hidden; border-radius: 16px; }
+        .tm-cfg-header { background: #ffffff; color: #0f172a; padding: 20px 24px 4px; display: flex; align-items: center; gap: 10px; }
+        .tm-cfg-header span { font-size: 16px; opacity: 0.7; }
+        .tm-cfg-header h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+        .tm-cfg-body { padding: 16px 24px 6px; }
+        .tm-cfg-section { margin-bottom: 14px; }
+        .tm-cfg-status { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+        .tm-cfg-status.on { background: #f0fdf4; color: #16a34a; }
+        .tm-cfg-status.off { background: #f8fafc; color: #94a3b8; }
+        .tm-cfg-divider { border: none; border-top: 1px solid #f1f5f9; margin: 4px 0 16px; }
         .tm-cfg-actions-secondary { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
-        .tm-cfg-actions-secondary button { width: 100%; border: none; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; transition: filter 0.2s; }
-        .tm-cfg-actions-secondary button:hover { filter: brightness(0.95); }
-        #tm-config-modal .tm-modal-actions { padding: 16px 24px 22px; margin: 0; }
+        .tm-cfg-actions-secondary button { width: 100%; border: 1px solid transparent; padding: 10px; border-radius: 10px; cursor: pointer; font-weight: 600; font-size: 12.5px; transition: filter 0.15s, background 0.15s; }
+        .tm-cfg-actions-secondary button:hover { filter: brightness(0.96); }
+        #tm-config-modal .tm-modal-actions { padding: 14px 24px 22px; margin: 0; }
+        .tm-modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         @keyframes slideInNotify { from { transform: translateX(-120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideOutNotify { from { transform: translateX(0); opacity: 1; } to { transform: translateX(-120%); opacity: 0; } }
     `);
 
     // --- Core Functions e Banco de Dados ---
@@ -384,9 +386,11 @@ end $$;`;
     toggleBtn.title = 'Gestão de Estoque';
     body.appendChild(toggleBtn);
 
+    // Posição vertical salva (arraste pela lateral)
     const savedBtnTop = GM_getValue('tm_btn_top', null);
     toggleBtn.style.top = (savedBtnTop !== null ? savedBtnTop : (window.innerHeight / 2 - 24)) + 'px';
 
+    // --- Arrastar o botão flutuante verticalmente pela lateral ---
     (() => {
         let dragging = false, moved = false, startY = 0, startTop = 0;
         const MARGIN = 8;
@@ -422,18 +426,22 @@ end $$;`;
         document.addEventListener('touchmove', (e) => { if (dragging) onMove(e.touches[0].clientY); }, { passive: true });
         document.addEventListener('touchend', onUp);
 
+        // Bloqueia o clique de abrir/fechar caso tenha havido arraste
         toggleBtn.addEventListener('click', (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); } }, true);
     })();
 
+    // Botão fixo na borda direita: clique abre/fecha a sidebar e empurra o conteúdo da página
     toggleBtn.addEventListener('click', () => {
         const isOpen = panel.classList.contains('open');
 
         if (isOpen) {
             closeWidget();
         } else {
+            // Abrir a Sidebar e empurrar o conteúdo da página
             panel.classList.add('open');
             toggleBtn.className = 'open-state';
             contentWrapper.classList.add('tm-pushed');
+            // Em seguida o histórico, caso devesse estar aberto e não estarmos no Trade
             if (isExpanded && activeTab !== 'trade') {
                 setTimeout(() => { historyPanel.classList.add('open'); }, PANEL_ANIM_MS);
             }
@@ -478,7 +486,7 @@ end $$;`;
             setTimeout(() => {
                 panel.classList.remove('open');
                 toggleBtn.className = 'closed-state';
-            }, HISTORY_ANIM_MS); 
+            }, HISTORY_ANIM_MS); // Aguarda fechar o histórico primeiro
         } else {
             panel.classList.remove('open');
             toggleBtn.className = 'closed-state';
@@ -492,7 +500,7 @@ end $$;`;
 
     fileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
-        fileInput.value = '';
+        fileInput.value = ''; // permite reimportar o mesmo arquivo depois
         if (!file) return;
         if (activeTab === 'trade') {
             showToast("⚠️ Aba Inválida", "Selecione a aba Encomendas ou Observações antes de importar.", "#ef4444");
@@ -523,12 +531,9 @@ end $$;`;
     });
 
     let activeTab = 'encomendas', editingId = null, selectedIds = new Set(), searchQuery = "";
-    let hideUndated = false, dateFrom = isoDateOffset(-5), dateTo = isoDateOffset(5);
+    let hideUndated = false, dateFrom = isoDateOffset(-5), dateTo = isoDateOffset(5), tradeInterval = null;
 
-    let isTradeActive = false;
-    let tradeObserver = null;
-    let tradeDebounce = null;
-
+    // Duração (ms) sincronizada com as transições CSS de #tm-manager-panel e #tm-history-panel
     const PANEL_ANIM_MS = 250;
     const HISTORY_ANIM_MS = 200;
 
@@ -541,8 +546,10 @@ end $$;`;
     tabTrade.addEventListener('click', () => switchTab('trade'));
 
     function switchTab(tabName) {
-        if (isTradeActive) {
-            stopTradeAnalysis();
+        if (tradeInterval) {
+            clearInterval(tradeInterval);
+            tradeInterval = null;
+            clearTradeHighlights();
         }
         activeTab = tabName; editingId = null; selectedIds.clear(); searchQuery = "";
         dateFrom = isoDateOffset(-5); dateTo = isoDateOffset(5);
@@ -551,6 +558,7 @@ end $$;`;
         tabObs.classList.toggle('active', tabName === 'observacoes');
         tabTrade.classList.toggle('active', tabName === 'trade');
 
+        // Desativa expandir histórico na aba trade para evitar bugs
         if (tabName === 'trade') {
             expandBtn.style.opacity = '0.3';
             expandBtn.style.pointerEvents = 'none';
@@ -566,10 +574,11 @@ end $$;`;
                 historyPanel.classList.add('open');
             }
         }
+
         render();
     }
 
-    // --- Sistema de Toasts e Notificações ---
+    // --- Sistema de Toasts e Notificações (Snooze + Abertura Integrada) ---
     function showToast(title, message, borderColor = '#3b82f6', actionData = null) {
         let wrapper = document.getElementById('tm-notification-wrapper');
         if (!wrapper) {
@@ -605,33 +614,32 @@ end $$;`;
         closeBtn.addEventListener('click', () => removeCard(alertCard));
 
         if (actionData) {
+            // Abrir e focar o registro específico na lateral
             alertCard.querySelector('.tm-toast-body').addEventListener('click', () => {
                 openRecordInSidebar(actionData.tab, actionData.id);
                 removeCard(alertCard);
             });
+            // Opção de adiar 4h
             const snoozeChk = alertCard.querySelector('.tm-snooze-chk');
             if(snoozeChk) {
                 snoozeChk.addEventListener('change', (e) => {
                     if (e.target.checked) {
                         let snoozed = GM_getValue('tm_snoozed_notifications', {});
-                        snoozed[actionData.id] = Date.now() + (4 * 60 * 60 * 1000);
+                        snoozed[actionData.id] = Date.now() + (4 * 60 * 60 * 1000); // 4 horas
                         GM_setValue('tm_snoozed_notifications', snoozed);
                         removeCard(alertCard);
-                        showToast("⏳ Adiado", "Você será lembrado em 4 horas.", "#10b981");
+                        showToast("⏳ Adiado", "Você será lembrado novamente em 4 horas.", "#10b981");
                     }
                 });
             }
         }
-        
-        // Até 3 Segundos
         setTimeout(() => removeCard(alertCard), 3000);
     }
 
     function removeCard(card) {
-        if (card.parentNode) {
-            card.style.opacity = '0'; card.style.transform = 'translateX(-120%)';
-            setTimeout(() => card.remove(), 300); // tempo que casa com a transição CSS
-        }
+        if (!card.parentNode || card.classList.contains('tm-alert-out')) return;
+        card.classList.add('tm-alert-out');
+        setTimeout(() => card.remove(), 350); // Aguarda a animação de saída terminar
     }
 
     function openRecordInSidebar(tab, id) {
@@ -642,6 +650,7 @@ end $$;`;
         }
         switchTab(tab);
 
+        // Espera a animação da sidebar/histórico e foca
         setTimeout(() => {
             if (isExpanded && tab !== 'trade') historyPanel.classList.add('open');
 
@@ -651,13 +660,13 @@ end $$;`;
                     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     const originalBg = card.style.backgroundColor;
                     card.style.transition = 'all 0.5s ease';
-                    card.style.backgroundColor = '#fef08a';
+                    card.style.backgroundColor = '#fef08a'; // Destaca amarelo claro
                     card.style.transform = 'scale(1.02)';
 
                     setTimeout(() => {
                         card.style.backgroundColor = originalBg;
                         card.style.transform = 'scale(1)';
-                    }, 2500);
+                    }, 2500); // Tira o destaque depois de 2,5s
                 }
             }, isExpanded ? HISTORY_ANIM_MS : 100);
         }, isOpen ? 0 : PANEL_ANIM_MS);
@@ -688,10 +697,7 @@ end $$;`;
         overlay.id = 'tm-config-modal';
         overlay.innerHTML = `
             <div class="tm-modal-content">
-                <div class="tm-cfg-header">
-                    <span style="font-size:20px; line-height: 1;">⚙️</span>
-                    <h3 style="margin: 0; font-size: 16px; font-weight: 600;">Configurações</h3>
-                </div>
+                <div class="tm-cfg-header"><span>⚙️</span><h3>Configurações</h3></div>
                 <div class="tm-cfg-body">
                     <div class="tm-cfg-status ${isConnected ? 'on' : 'off'}">
                         ${isConnected ? '🟢 Conectado ao Supabase (nuvem)' : '⚪ Modo Local (neste navegador)'}
@@ -719,7 +725,7 @@ end $$;`;
                 </div>
                 <div class="tm-modal-actions">
                     <button class="tm-modal-btn tm-btn-cancel" id="cfg-cancel">Cancelar</button>
-                    <button class="tm-modal-btn tm-btn-confirm" id="cfg-save" ${isConnected ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>Salvar</button>
+                    <button class="tm-modal-btn tm-btn-confirm" id="cfg-save" ${isConnected ? 'disabled' : ''}>Salvar</button>
                 </div>
             </div>`;
         body.appendChild(overlay);
@@ -877,20 +883,23 @@ end $$;`;
 
         const toNotify = db.observacoes.filter(o => {
             if (!o.notify) return false;
+
+            // Regra: Se a notificação for de uma data passada, desmarca sozinho.
             if (!o.notify_weekday && o.data && o.data < todayStr) {
                 o.notify = false;
                 hasChanges = true;
                 supaUpsert('observacoes', o);
                 return false;
             }
-            if (snoozed[o.id] && now < snoozed[o.id]) return false;
+
+            if (snoozed[o.id] && now < snoozed[o.id]) return false; // Verifica se foi adiada
             if (o.notify_weekday) return o.notify_weekday === todayWd;
             return !o.data || o.data === todayStr;
         });
 
         if (hasChanges) {
             saveDB();
-            render();
+            render(); // Atualiza visual caso um checkbox tenha desmarcado
         }
 
         toNotify.forEach((item, idx) => {
@@ -898,7 +907,7 @@ end $$;`;
         });
     }
 
-    // --- Sistema Multifuncional de Análise de Trade (Otimizado) ---
+    // --- Sistema Multifuncional de Análise de Trade (Local) ---
     const STORE_CODE_REGEX = /^([A-ZÀ-Ú]+)\s*0*(\d+)$/;
     function normalizeStoreCode(rawText) {
         if (!rawText) return '';
@@ -929,6 +938,9 @@ end $$;`;
         row.setAttribute('data-tm-trade', '1');
     }
 
+    // Descobre o índice da coluna "Estoque" a partir do cabeçalho real da tabela,
+    // evitando o antigo bug de pegar o primeiro número qualquer da linha (que podia
+    // ser a coluna errada, ex: código de filial numérico).
     function getStockColIndex(table, cache) {
         if (!table) return -1;
         if (cache.has(table)) return cache.get(table);
@@ -944,7 +956,7 @@ end $$;`;
         return idx;
     }
 
-    function runTradeAnalysis(isSilent = false, forceRecalculate = false) {
+    function runTradeAnalysis(isSilent = false) {
         const lojasText = document.getElementById('trade-lojas')?.value || '';
         const qtdsText = document.getElementById('trade-qtds')?.value || '';
         const stockColCache = new Map();
@@ -956,6 +968,7 @@ end $$;`;
         for (let i = 0; i < lojasArr.length; i++) {
             const norm = normalizeStoreCode(lojasArr[i]);
             if (norm) {
+                // A quantidade buscará o exato índice (linha) da Loja correspondente
                 const qtdVal = parseInt((qtdsArr[i] || '').trim(), 10);
                 tradeMap.set(norm, isNaN(qtdVal) ? 0 : qtdVal);
             }
@@ -966,18 +979,25 @@ end $$;`;
             return false;
         }
 
-        // Limpa apenas se for um forçamento (ex: alterou o input)
-        if (forceRecalculate) clearTradeHighlights();
-
+        clearTradeHighlights();
         let matchedCount = 0;
         const allRows = document.querySelectorAll('tr');
 
+        // Varredura célula-a-célula: não depende de índice fixo de coluna, então continua
+        // funcionando mesmo se a tabela tiver colunas/th ocultos deslocando a posição real
+        // do cabeçalho em relação às linhas de dados (causa da contagem incorreta).
         for (let i = 0; i < allRows.length; i++) {
-            // PULA a linha se já foi tratada e não estamos forçando reprocessamento (Impede o Bug do Modal)
-            if (!forceRecalculate && allRows[i].hasAttribute('data-tm-trade')) continue;
-
-            const cells = allRows[i].cells; 
+            const row = allRows[i];
+            const cells = row.cells; // HTMLCollection nativa: mais rápida que querySelectorAll
             if (!cells || cells.length === 0) continue;
+
+            // Ignora linhas dentro de modais/diálogos externos à página (ex: modal de filiais),
+            // pois mutar o DOM deles em loop causava o bug de modal ficando em branco.
+            if (row.closest('[role="dialog"], .modal, [class*="modal" i]')) continue;
+
+            const table = row.closest('table');
+            const stockIdx = getStockColIndex(table, stockColCache);
+            if (stockIdx === -1) continue; // Sem coluna "Estoque" reconhecida: não é a tabela alvo, pula
 
             for (let ci = 0; ci < cells.length; ci++) {
                 const cellTextRaw = cells[ci].textContent.trim();
@@ -987,45 +1007,17 @@ end $$;`;
                 if (cellNorm && tradeMap.has(cellNorm)) {
                     matchedCount++;
                     const targetQtd = tradeMap.get(cellNorm);
-                    let stockNum = 0;
-                    const table = allRows[i].closest('table');
-                    const stockIdx = getStockColIndex(table, stockColCache);
-                    
-                    if (stockIdx > -1 && cells[stockIdx]) {
-                        const n = parseInt(cells[stockIdx].textContent.replace(/[^\d-]/g, ''), 10);
-                        stockNum = isNaN(n) ? 0 : n;
-                    } else {
-                        for (let ni = 0; ni < cells.length; ni++) {
-                            if (ni === ci) continue;
-                            const n = parseInt(cells[ni].textContent.replace(/[^\d-]/g, ''), 10);
-                            if (!isNaN(n)) { stockNum = n; break; }
-                        }
-                    }
-                    highlightTradeRow(allRows[i], stockNum >= targetQtd);
-                    break;
+                    const n = cells[stockIdx] ? parseInt(cells[stockIdx].textContent.replace(/[^\d-]/g, ''), 10) : NaN;
+                    const stockNum = isNaN(n) ? 0 : n;
+                    highlightTradeRow(row, stockNum >= targetQtd);
+                    break; // uma correspondência por linha é suficiente
                 }
             }
         }
 
-        if (!isSilent) showToast("📈 Análise em Execução", `Monitoramento ativo de forma fluida.`, "#10b981");
+        if (!isSilent) showToast("📈 Análise em Execução", `Monitoramento ativo! ${matchedCount} lojas destacadas.`, "#10b981");
         return true;
     }
-
-    function stopTradeAnalysis() {
-        isTradeActive = false;
-        if (tradeObserver) {
-            tradeObserver.disconnect();
-            tradeObserver = null;
-        }
-        clearTimeout(tradeDebounce);
-        clearTradeHighlights();
-        const btn = document.getElementById('trade-start');
-        if (btn) {
-            btn.textContent = 'Iniciar Análise'; 
-            btn.style.backgroundColor = '#10b981';
-        }
-    }
-
 
     // --- Renderização Dinâmica e Otimizada ---
     const contentArea = document.getElementById('tm-panel-content');
@@ -1062,16 +1054,12 @@ end $$;`;
             const updateCounts = () => {
                 if (countLojas) countLojas.textContent = `(${countNonEmptyLines(tl.value)})`;
                 if (countQtds) countQtds.textContent = `(${countNonEmptyLines(tq.value)})`;
-                
-                // Recalcula ativamente se os campos sofrerem mudança durante a execução
-                if (isTradeActive) {
-                    clearTimeout(tradeDebounce);
-                    tradeDebounce = setTimeout(() => runTradeAnalysis(true, true), 300);
-                }
             };
             if (tl && tq) {
+                // Sincroniza Scroll do Trade
                 tl.addEventListener('scroll', () => { tq.scrollTop = tl.scrollTop; });
                 tq.addEventListener('scroll', () => { tl.scrollTop = tq.scrollTop; });
+                // Contagem de linhas preenchidas em cada coluna
                 tl.addEventListener('input', updateCounts);
                 tq.addEventListener('input', updateCounts);
                 updateCounts();
@@ -1097,6 +1085,7 @@ end $$;`;
             return;
         }
 
+        // Exclusão Múltipla
         if (e.target.id === 'tm-delete-selected') {
             const ids = Array.from(selectedIds);
             showConfirmModal("🚨 Excluir Selecionados?", `Apagar ${selectedIds.size} registros definitivamente?`, () => {
@@ -1146,23 +1135,14 @@ end $$;`;
             saveDB(); render(); supaUpsert('observacoes', record);
         }
 
-        // Lógica de Ativação do Trade por Mutation Observer em vez de SetInterval
         if (e.target.id === 'trade-start') {
-            if (isTradeActive) {
-                stopTradeAnalysis();
+            if (tradeInterval) {
+                clearInterval(tradeInterval); tradeInterval = null; clearTradeHighlights();
+                e.target.textContent = 'Iniciar Análise'; e.target.style.backgroundColor = '#10b981';
             } else {
-                if (runTradeAnalysis(false, true)) {
-                    isTradeActive = true;
-                    e.target.textContent = '⏸️ Parar Análise'; 
-                    e.target.style.backgroundColor = '#ef4444';
-
-                    tradeObserver = new MutationObserver(() => {
-                        clearTimeout(tradeDebounce);
-                        tradeDebounce = setTimeout(() => {
-                            if (isTradeActive) runTradeAnalysis(true, false);
-                        }, 400); 
-                    });
-                    tradeObserver.observe(document.body, { childList: true, subtree: true });
+                if (runTradeAnalysis(false)) {
+                    e.target.textContent = '⏸️ Parar Análise'; e.target.style.backgroundColor = '#ef4444';
+                    tradeInterval = setInterval(() => { runTradeAnalysis(true); }, 400);
                 }
             }
         }
@@ -1297,6 +1277,7 @@ end $$;`;
     }
 
     function buildTradeFormHTML() {
+        const isRunning = !!tradeInterval;
         return `
             <div class="tm-form" style="gap: 8px;">
                 <strong style="color:#10b981;">Trade Analytics (Local)</strong>
@@ -1311,7 +1292,7 @@ end $$;`;
                         <textarea id="trade-qtds" class="tm-trade-sync" placeholder="15\\n\\n5" rows="12" style="background-color: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; box-sizing: border-box; width: 100%;"></textarea>
                     </div>
                 </div>
-                <button id="trade-start" style="background-color: ${isTradeActive ? '#ef4444' : '#10b981'}; color: white; margin-top: 6px;">${isTradeActive ? 'Parar Análise' : 'Iniciar Análise'}</button>
+                <button id="trade-start" style="background-color: ${isRunning ? '#ef4444' : '#10b981'}; color: white; margin-top: 6px;">${isRunning ? 'Parar Análise' : 'Iniciar Análise'}</button>
             </div>`;
     }
 
