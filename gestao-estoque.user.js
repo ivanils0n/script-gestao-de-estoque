@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gestão de Estoque
 // @namespace    http://tampermonkey.net/
-// @version      1.0.0
+// @version      1.0.1
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
@@ -19,16 +19,18 @@
 
     // CSS Otimizado
     GM_addStyle(`
-        #tm-manager-btn { position: fixed; bottom: 20px; right: 20px; z-index: 999999999; background-color: #0f172a; color: white; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3); cursor: grab; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; user-select: none; }
-        #tm-manager-btn:active { cursor: grabbing; }
-        #tm-manager-btn.open-state { width: 60px; height: 60px; border-radius: 50%; font-size: 24px; opacity: 1; }
-        #tm-manager-btn.closed-state { width: 40px; height: 40px; border-radius: 8px; font-size: 18px; opacity: 0.4; }
-        #tm-manager-btn.closed-state:hover { opacity: 1; transform: scale(1.05); }
+        #tm-content-wrapper { transition: margin-right 0.28s cubic-bezier(0.4, 0, 0.2, 1); margin-right: 0; }
+        #tm-content-wrapper.tm-pushed { margin-right: 380px; }
 
-        #tm-manager-panel { position: fixed; top: 0; right: -420px; width: 400px; height: 100vh; background-color: #ffffff; color: #334155; z-index: 999999998; box-shadow: -5px 0 25px rgba(0,0,0,0.2); transition: right 0.25s cubic-bezier(0.075, 0.82, 0.165, 1); font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; box-sizing: border-box; }
+        #tm-manager-btn { position: fixed; top: 50%; right: 16px; transform: translateY(-50%); z-index: 999999999; width: 48px; height: 48px; border-radius: 50%; background-color: #ffffff; color: #0f172a; border: none; box-shadow: 0 4px 14px rgba(0,0,0,0.18); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 22px; opacity: 0.8; transition: opacity 0.25s ease, transform 0.25s ease, right 0.28s cubic-bezier(0.4, 0, 0.2, 1); user-select: none; }
+        #tm-manager-btn:hover { opacity: 1; transform: translateY(-50%) scale(1.08); }
+        #tm-manager-btn.closed-state { right: 16px; }
+        #tm-manager-btn.open-state { right: 396px; }
+
+        #tm-manager-panel { position: fixed; top: 0; right: -400px; width: 380px; height: 100vh; background-color: #ffffff; color: #334155; z-index: 999999998; box-shadow: -5px 0 25px rgba(0,0,0,0.2); transition: right 0.28s cubic-bezier(0.4, 0, 0.2, 1); font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; box-sizing: border-box; }
         #tm-manager-panel.open { right: 0; }
 
-        #tm-history-panel { position: fixed; top: 0; right: 400px; width: 0; height: 100vh; background-color: #ffffff; color: #334155; z-index: 999999997; overflow: hidden; transition: width 0.2s cubic-bezier(0.075, 0.82, 0.165, 1); font-family: system-ui, -apple-system, sans-serif; box-sizing: border-box; }
+        #tm-history-panel { position: fixed; top: 0; right: 380px; width: 0; height: 100vh; background-color: #ffffff; color: #334155; z-index: 999999997; overflow: hidden; transition: width 0.2s cubic-bezier(0.075, 0.82, 0.165, 1); font-family: system-ui, -apple-system, sans-serif; box-sizing: border-box; }
         #tm-history-panel.open { width: 400px; box-shadow: -5px 0 20px rgba(0,0,0,0.12); border-left: 1px solid #e2e8f0; }
         #tm-history-panel-inner { height: 100%; width: 400px; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; overflow: hidden; }
         #tm-history-panel-inner h3 { margin: 0 0 14px 0; color: #0f172a; font-size: 1.1rem; flex-shrink: 0; }
@@ -344,6 +346,12 @@ end $$;`;
 
     const body = document.body;
 
+    // --- Wrapper de conteúdo (efeito "push", estilo Sider) ---
+    const contentWrapper = document.createElement('div');
+    contentWrapper.id = 'tm-content-wrapper';
+    while (body.firstChild) contentWrapper.appendChild(body.firstChild);
+    body.appendChild(contentWrapper);
+
     // --- Inputs e Componentes Globais ---
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
@@ -358,42 +366,17 @@ end $$;`;
     toggleBtn.title = 'Gestão de Estoque';
     body.appendChild(toggleBtn);
 
-    // Lógica Drag & Drop Botão
-    let isDragging = false, startX, startY, initialLeft, initialTop;
-    toggleBtn.addEventListener('mousedown', (e) => {
-        isDragging = false;
-        startX = e.clientX; startY = e.clientY;
-        const rect = toggleBtn.getBoundingClientRect();
-        initialLeft = rect.left; initialTop = rect.top;
-
-        function onMouseMove(moveEvent) {
-            const dx = moveEvent.clientX - startX;
-            const dy = moveEvent.clientY - startY;
-            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-                isDragging = true;
-                toggleBtn.style.right = 'auto'; toggleBtn.style.bottom = 'auto';
-                let newLeft = Math.max(0, Math.min(initialLeft + dx, window.innerWidth - rect.width));
-                let newTop = Math.max(0, Math.min(initialTop + dy, window.innerHeight - rect.height));
-                toggleBtn.style.left = newLeft + 'px';
-                toggleBtn.style.top = newTop + 'px';
-            }
-        }
-        function onMouseUp() { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-    });
-
-    // Animação de Abrir e Fechar com ordem correta
-    toggleBtn.addEventListener('click', (e) => {
-        if (isDragging) { e.preventDefault(); e.stopPropagation(); return; }
+    // Botão fixo na borda direita: clique abre/fecha a sidebar e empurra o conteúdo da página
+    toggleBtn.addEventListener('click', () => {
         const isOpen = panel.classList.contains('open');
 
         if (isOpen) {
             closeWidget();
         } else {
-            // Abrir primeiro a Sidebar
+            // Abrir a Sidebar e empurrar o conteúdo da página
             panel.classList.add('open');
             toggleBtn.className = 'open-state';
+            contentWrapper.classList.add('tm-pushed');
             // Em seguida o histórico, caso devesse estar aberto e não estarmos no Trade
             if (isExpanded && activeTab !== 'trade') {
                 setTimeout(() => { historyPanel.classList.add('open'); }, PANEL_ANIM_MS);
@@ -433,6 +416,7 @@ end $$;`;
     const historyListSlot = document.getElementById('tm-history-list-slot');
 
     function closeWidget() {
+        contentWrapper.classList.remove('tm-pushed');
         if (isExpanded) {
             historyPanel.classList.remove('open');
             setTimeout(() => {
@@ -657,10 +641,11 @@ end $$;`;
                 </select>
                 <div id="cfg-supabase-fields" style="display:${cfg.mode === 'supabase' ? 'block' : 'none'};">
                     <label class="tm-cfg-label">URL do Projeto Supabase</label>
-                    <input type="text" id="cfg-url" class="tm-cfg-input" placeholder="https://xxxx.supabase.co" value="${cfg.supabaseUrl || ''}">
+                    <input type="password" autocomplete="new-password" id="cfg-url" class="tm-cfg-input" placeholder="https://xxxx.supabase.co" value="${cfg.supabaseUrl || ''}">
                     <label class="tm-cfg-label">Chave Anon/Public</label>
-                    <input type="text" id="cfg-key" class="tm-cfg-input" placeholder="eyJhbGciOi..." value="${cfg.supabaseKey || ''}">
+                    <input type="password" autocomplete="new-password" id="cfg-key" class="tm-cfg-input" placeholder="eyJhbGciOi..." value="${cfg.supabaseKey || ''}">
                     <button type="button" id="cfg-view-sql" style="background:#64748b; color:#fff; width:100%; margin-bottom:12px;">📋 Ver Script SQL das Tabelas</button>
+                    ${cfg.mode === 'supabase' && cfg.supabaseUrl && cfg.supabaseKey ? '<button type="button" id="cfg-disconnect" style="background:#ef4444; color:#fff; width:100%; margin-bottom:12px;">🔌 Desconectar Banco de Dados</button>' : ''}
                 </div>
                 <div class="tm-modal-actions">
                     <button class="tm-modal-btn tm-btn-cancel" id="cfg-cancel">Cancelar</button>
@@ -677,6 +662,18 @@ end $$;`;
 
         document.getElementById('cfg-view-sql').addEventListener('click', showSqlModal);
         document.getElementById('cfg-cancel').addEventListener('click', () => overlay.remove());
+
+        const disconnectBtn = document.getElementById('cfg-disconnect');
+        if (disconnectBtn) disconnectBtn.addEventListener('click', () => {
+            showConfirmModal("🔌 Desconectar Banco de Dados?", "O modo voltará para Local e as credenciais salvas serão apagadas.", () => {
+                const newCfg = { mode: 'local', supabaseUrl: '', supabaseKey: '' };
+                saveConfig(newCfg);
+                overlay.remove();
+                showToast("🔌 Banco Desconectado", "Configuração alterada para modo Local.", "#ef4444");
+                setupRealtime(newCfg);
+            }, "Desconectar", true);
+        });
+
         document.getElementById('cfg-save').addEventListener('click', () => {
             const newCfg = {
                 mode: modeSelect.value,
@@ -863,9 +860,28 @@ end $$;`;
         row.setAttribute('data-tm-trade', '1');
     }
 
+    // Descobre o índice da coluna "Estoque" a partir do cabeçalho real da tabela,
+    // evitando o antigo bug de pegar o primeiro número qualquer da linha (que podia
+    // ser a coluna errada, ex: código de filial numérico).
+    function getStockColIndex(table, cache) {
+        if (!table) return -1;
+        if (cache.has(table)) return cache.get(table);
+        let idx = -1;
+        const headerRow = (table.tHead && table.tHead.rows[0]) || table.rows[0];
+        if (headerRow) {
+            const headerCells = headerRow.cells;
+            for (let i = 0; i < headerCells.length; i++) {
+                if (headerCells[i].textContent.trim().toUpperCase() === 'ESTOQUE') { idx = i; break; }
+            }
+        }
+        cache.set(table, idx);
+        return idx;
+    }
+
     function runTradeAnalysis(isSilent = false) {
         const lojasText = document.getElementById('trade-lojas')?.value || '';
         const qtdsText = document.getElementById('trade-qtds')?.value || '';
+        const stockColCache = new Map();
 
         const lojasArr = lojasText.split('\n');
         const qtdsArr = qtdsText.split('\n');
@@ -905,10 +921,18 @@ end $$;`;
                     matchedCount++;
                     const targetQtd = tradeMap.get(cellNorm);
                     let stockNum = 0;
-                    for (let ni = 0; ni < cells.length; ni++) {
-                        if (ni === ci) continue;
-                        const n = parseInt(cells[ni].textContent.replace(/[^\d-]/g, ''), 10);
-                        if (!isNaN(n)) { stockNum = n; break; }
+                    const table = allRows[i].closest('table');
+                    const stockIdx = getStockColIndex(table, stockColCache);
+                    if (stockIdx > -1 && cells[stockIdx]) {
+                        const n = parseInt(cells[stockIdx].textContent.replace(/[^\d-]/g, ''), 10);
+                        stockNum = isNaN(n) ? 0 : n;
+                    } else {
+                        // Fallback: coluna "Estoque" não encontrada no cabeçalho, usa a heurística antiga
+                        for (let ni = 0; ni < cells.length; ni++) {
+                            if (ni === ci) continue;
+                            const n = parseInt(cells[ni].textContent.replace(/[^\d-]/g, ''), 10);
+                            if (!isNaN(n)) { stockNum = n; break; }
+                        }
                     }
                     highlightTradeRow(allRows[i], stockNum >= targetQtd);
                     break; // uma correspondência por linha é suficiente
@@ -949,10 +973,21 @@ end $$;`;
         if (isTrade) {
             const tl = document.getElementById('trade-lojas');
             const tq = document.getElementById('trade-qtds');
+            const countLojas = document.getElementById('tm-count-lojas');
+            const countQtds = document.getElementById('tm-count-qtds');
+            const countNonEmptyLines = (val) => val.split('\n').filter(l => l.trim() !== '').length;
+            const updateCounts = () => {
+                if (countLojas) countLojas.textContent = `(${countNonEmptyLines(tl.value)})`;
+                if (countQtds) countQtds.textContent = `(${countNonEmptyLines(tq.value)})`;
+            };
             if (tl && tq) {
                 // Sincroniza Scroll do Trade
                 tl.addEventListener('scroll', () => { tq.scrollTop = tl.scrollTop; });
                 tq.addEventListener('scroll', () => { tl.scrollTop = tq.scrollTop; });
+                // Contagem de linhas preenchidas em cada coluna
+                tl.addEventListener('input', updateCounts);
+                tq.addEventListener('input', updateCounts);
+                updateCounts();
             }
         }
     }
@@ -1174,11 +1209,11 @@ end $$;`;
                 <p style="font-size: 12px; color: #64748b; margin: 0 0 4px 0;">As linhas de lojas e quantidades rolam juntas. Pule as linhas (Enter) para bater a QTD exatamente com a linha da sua Loja.</p>
                 <div style="display: flex; gap: 10px;">
                     <div style="flex: 1; display: flex; flex-direction: column;">
-                        <label style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #475569;">Coluna Lojas</label>
+                        <label style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #475569;">Coluna Lojas <span id="tm-count-lojas" style="font-weight:normal; color:#64748b;">(0)</span></label>
                         <textarea id="trade-lojas" class="tm-trade-sync" placeholder="PVH 1\\n\\nJAR 2" rows="12" style="background-color: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; box-sizing: border-box; width: 100%;"></textarea>
                     </div>
                     <div style="flex: 1; display: flex; flex-direction: column;">
-                        <label style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #475569;">Coluna Qtds</label>
+                        <label style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #475569;">Coluna Qtds <span id="tm-count-qtds" style="font-weight:normal; color:#64748b;">(0)</span></label>
                         <textarea id="trade-qtds" class="tm-trade-sync" placeholder="15\\n\\n5" rows="12" style="background-color: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; box-sizing: border-box; width: 100%;"></textarea>
                     </div>
                 </div>
