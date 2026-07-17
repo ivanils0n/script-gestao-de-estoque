@@ -5,6 +5,7 @@
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
+// @exclude      https://gemini.google.com/*
 // @exclude      https://web.whatsapp.com/*
 // @exclude      https://www.google.com/*
 // @updateURL    https://raw.githubusercontent.com/ivanils0n/script-gestao-de-estoque/refs/heads/main/gestao-estoque.user.js
@@ -282,9 +283,17 @@ end $$;`;
 
     async function supaFetchTable(cfg, table, from, to) {
         const base = normalizeSupabaseUrl(cfg.supabaseUrl);
-        const columns = table === 'encomendas'
-            ? 'id,loja,produto,ean,qtd,data'
-            : 'id,titulo,data,desc,notify,notify_weekday,auto_pin';
+
+        // CORREÇÃO: Adicionado o mapeamento correto das colunas para a tabela 'reforco'
+        let columns = '';
+        if (table === 'encomendas') {
+            columns = 'id,loja,produto,ean,qtd,data';
+        } else if (table === 'reforco') {
+            columns = 'id,loja,data,grupo';
+        } else {
+            columns = 'id,titulo,data,desc,notify,notify_weekday,auto_pin';
+        }
+
         let url = `${base}/rest/v1/${table}?select=${columns}&order=created_at.desc`;
         if (from && to) url += `&or=(data.is.null,and(data.gte.${from},data.lte.${to}))`;
         const res = await fetch(url, { headers: { 'apikey': cfg.supabaseKey, 'Authorization': `Bearer ${cfg.supabaseKey}` } });
@@ -343,6 +352,8 @@ end $$;`;
             .channel('tm-store-changes')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'encomendas' }, handleRealtimeChange('encomendas'))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'observacoes' }, handleRealtimeChange('observacoes'))
+            // CORREÇÃO: Adicionada a escuta em tempo real para a tabela 'reforco'
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'reforco' }, handleRealtimeChange('reforco'))
             .subscribe();
     }
 
@@ -355,12 +366,17 @@ end $$;`;
         if (!force && (Date.now() - lastSync) < THROTTLE_MS) return;
 
         try {
-            const [enc, obs] = await Promise.all([
+            // CORREÇÃO: Adicionada a tabela 'reforco' nas promessas de requisição e no merge
+            const [enc, obs, ref] = await Promise.all([
                 supaFetchTable(cfg, 'encomendas', dateFrom, dateTo),
-                supaFetchTable(cfg, 'observacoes', dateFrom, dateTo)
+                supaFetchTable(cfg, 'observacoes', dateFrom, dateTo),
+                supaFetchTable(cfg, 'reforco', dateFrom, dateTo)
             ]);
+
             mergeSyncedItems('encomendas', enc || [], dateFrom, dateTo);
             mergeSyncedItems('observacoes', obs || [], dateFrom, dateTo);
+            mergeSyncedItems('reforco', ref || [], dateFrom, dateTo);
+
             GM_setValue('tm_store_db', db);
             GM_setValue('tm_last_sync_at', Date.now());
             render();
