@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gestão de Estoque
 // @namespace    http://tampermonkey.net/
-// @version      1.0.6
+// @version      1.0.8
 // @description  Controle de encomendas, notificações e análise contínua de trade sobreposta.
 // @author       ivanils0n
 // @match        *://*/*
@@ -145,12 +145,13 @@
         .tm-pin-close:hover { color: #78350f; font-weight: bold; }
     `);
 
-    // --- Core Functions e Banco de Dados ---
-    let db = GM_getValue('tm_store_db', { encomendas: [], observacoes: [] });
+   // --- Core Functions e Banco de Dados ---
+    let db = GM_getValue('tm_store_db', { encomendas: [], observacoes: [], reforco: [] });
     let realtimeChannel = null;
 
     if (!Array.isArray(db.encomendas)) db.encomendas = [];
     if (!Array.isArray(db.observacoes)) db.observacoes = [];
+    if (!Array.isArray(db.reforco)) db.reforco = [];
 
     const saveDB = () => GM_setValue('tm_store_db', db);
     const generateUniqueId = () => Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
@@ -190,19 +191,32 @@ create table if not exists public.observacoes (
   created_at timestamptz default now()
 );
 
+create table if not exists public.reforco (
+  id text primary key,
+  loja text,
+  data date,
+  grupo text,
+  created_at timestamptz default now()
+);
+
 alter table public.observacoes add column if not exists notify_weekday text;
+alter table public.observacoes add column if not exists auto_pin boolean default false;
 
 alter table public.encomendas enable row level security;
 alter table public.observacoes enable row level security;
+alter table public.reforco enable row level security;
 
 create policy "encomendas_all" on public.encomendas for all using (true) with check (true);
 create policy "observacoes_all" on public.observacoes for all using (true) with check (true);
+create policy "reforco_all" on public.reforco for all using (true) with check (true);
 
 grant all on public.encomendas to anon, authenticated;
 grant all on public.observacoes to anon, authenticated;
+grant all on public.reforco to anon, authenticated;
 
 alter table public.encomendas replica identity full;
 alter table public.observacoes replica identity full;
+alter table public.reforco replica identity full;
 
 do $$
 begin
@@ -217,6 +231,12 @@ begin
     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'observacoes'
   ) then
     alter publication supabase_realtime add table public.observacoes;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'reforco'
+  ) then
+    alter publication supabase_realtime add table public.reforco;
   end if;
 end $$;`;
 
@@ -264,7 +284,7 @@ end $$;`;
         const base = normalizeSupabaseUrl(cfg.supabaseUrl);
         const columns = table === 'encomendas'
             ? 'id,loja,produto,ean,qtd,data'
-            : 'id,titulo,data,desc,notify,notify_weekday';
+            : 'id,titulo,data,desc,notify,notify_weekday,auto_pin';
         let url = `${base}/rest/v1/${table}?select=${columns}&order=created_at.desc`;
         if (from && to) url += `&or=(data.is.null,and(data.gte.${from},data.lte.${to}))`;
         const res = await fetch(url, { headers: { 'apikey': cfg.supabaseKey, 'Authorization': `Bearer ${cfg.supabaseKey}` } });
@@ -272,10 +292,10 @@ end $$;`;
         return res.json();
     }
 
-    async function supaFetchNotifyCandidates(cfg) {
+   async function supaFetchNotifyCandidates(cfg) {
         const base = normalizeSupabaseUrl(cfg.supabaseUrl);
-        const columns = 'id,titulo,data,desc,notify,notify_weekday';
-        const url = `${base}/rest/v1/observacoes?select=${columns}&notify=eq.true`;
+        const columns = 'id,titulo,data,desc,notify,notify_weekday,auto_pin';
+        const url = `${base}/rest/v1/observacoes?select=${columns}&or=(notify.eq.true,auto_pin.eq.true)`;
         const res = await fetch(url, { headers: { 'apikey': cfg.supabaseKey, 'Authorization': `Bearer ${cfg.supabaseKey}` } });
         if (!res.ok) throw new Error(`Erro ao buscar notificações: ${res.status}`);
         return res.json();
@@ -478,6 +498,7 @@ end $$;`;
         <div class="tm-tabs">
             <button class="tm-tab active" id="tab-encomendas">Encomendas</button>
             <button class="tm-tab" id="tab-observacoes">Observações</button>
+            <button class="tm-tab" id="tab-reforco">Reforço</button>
             <button class="tm-tab" id="tab-trade">Trade</button>
         </div>
         <div class="tm-content" id="tm-panel-content"></div>
@@ -550,10 +571,12 @@ end $$;`;
 
     const tabEnc = document.getElementById('tab-encomendas');
     const tabObs = document.getElementById('tab-observacoes');
+    const tabReforco = document.getElementById('tab-reforco');
     const tabTrade = document.getElementById('tab-trade');
 
     tabEnc.addEventListener('click', () => switchTab('encomendas'));
     tabObs.addEventListener('click', () => switchTab('observacoes'));
+    tabReforco.addEventListener('click', () => switchTab('reforco'));
     tabTrade.addEventListener('click', () => switchTab('trade'));
 
     function switchTab(tabName) {
@@ -567,6 +590,7 @@ end $$;`;
 
         tabEnc.classList.toggle('active', tabName === 'encomendas');
         tabObs.classList.toggle('active', tabName === 'observacoes');
+        tabReforco.classList.toggle('active', tabName === 'reforco');
         tabTrade.classList.toggle('active', tabName === 'trade');
 
         // Desativa expandir histórico na aba trade para evitar bugs
@@ -824,51 +848,34 @@ end $$;`;
         }
         showConfirmModal("📥 Importar Planilha?", `Foram encontrados ${rows.length} registros para importar na aba atual.`, () => {
             const imported = [];
-            let ignorados = 0; // Contador para saber quantos foram cortados
+            let ignorados = 0;
 
             rows.forEach(row => {
                 let record;
-                // Tenta pegar o ID da planilha. Se não tiver, gera um novo.
                 const rowId = getFieldValue(row, 'id');
                 const finalId = rowId ? rowId : generateUniqueId();
 
                 if (activeTab === 'encomendas') {
-                    // Verifica se o ID já existe no banco de encomendas
-                    if (db.encomendas.find(e => String(e.id) === String(finalId))) {
-                        ignorados++;
-                        return; // Corta (pula) este registro
-                    }
-
+                    if (db.encomendas.find(e => String(e.id) === String(finalId))) { ignorados++; return; }
                     const loja = getFieldValue(row, 'loja');
                     const produto = getFieldValue(row, 'produto');
                     if (!loja && !produto) return;
 
-                    record = {
-                        id: finalId,
-                        loja, produto,
-                        ean: getFieldValue(row, 'ean'),
-                        qtd: getFieldValue(row, 'qtd', 'quantidade'),
-                        data: getFieldValue(row, 'data') || todayISO()
-                    };
+                    record = { id: finalId, loja, produto, ean: getFieldValue(row, 'ean'), qtd: getFieldValue(row, 'qtd', 'quantidade'), data: getFieldValue(row, 'data') || todayISO() };
                     db.encomendas.unshift(record);
-                } else {
-                    // Verifica se o ID já existe no banco de observações
-                    if (db.observacoes.find(o => String(o.id) === String(finalId))) {
-                        ignorados++;
-                        return; // Corta (pula) este registro
-                    }
+                } else if (activeTab === 'reforco') {
+                    if (db.reforco.find(r => String(r.id) === String(finalId))) { ignorados++; return; }
+                    const loja = getFieldValue(row, 'loja');
+                    if (!loja) return;
 
+                    record = { id: finalId, loja, data: getFieldValue(row, 'data') || todayISO(), grupo: getFieldValue(row, 'grupo') };
+                    db.reforco.unshift(record);
+                } else {
+                    if (db.observacoes.find(o => String(o.id) === String(finalId))) { ignorados++; return; }
                     const titulo = getFieldValue(row, 'titulo', 'título', 'assunto');
                     if (!titulo) return;
 
-                    record = {
-                        id: finalId,
-                        titulo,
-                        data: getFieldValue(row, 'data') || null,
-                        notify_weekday: getFieldValue(row, 'notify_weekday', 'repeticao', 'repetição') || null,
-                        desc: getFieldValue(row, 'desc', 'descricao', 'descrição'),
-                        notify: false
-                    };
+                    record = { id: finalId, titulo, data: getFieldValue(row, 'data') || null, notify_weekday: getFieldValue(row, 'notify_weekday', 'repeticao', 'repetição') || null, desc: getFieldValue(row, 'desc', 'descricao', 'descrição'), notify: false };
                     db.observacoes.unshift(record);
                 }
                 imported.push(record);
@@ -878,7 +885,6 @@ end $$;`;
             render();
             if (imported.length > 0) supaUpsert(activeTab, imported);
 
-            // Mostra o resultado final com a quantidade de ignorados
             if (ignorados > 0) {
                 showToast("✅ Importação Concluída", `${imported.length} importados. ${ignorados} ignorados (já existiam).`, "#10b981");
             } else {
@@ -889,7 +895,7 @@ end $$;`;
 
     function exportCurrentTab() {
         if (activeTab === 'trade') {
-            showToast("⚠️ Aba Inválida", "Selecione a aba Encomendas ou Observações antes de exportar.", "#ef4444");
+            showToast("⚠️ Aba Inválida", "Selecione uma aba válida antes de exportar.", "#ef4444");
             return;
         }
         const items = db[activeTab];
@@ -898,15 +904,16 @@ end $$;`;
             return;
         }
 
-        // Agora o 'ID' é a primeira coluna a ser exportada
-        const rows = items.map(item => activeTab === 'encomendas'
-            ? { ID: item.id, Loja: item.loja, Produto: item.produto, EAN: item.ean, Qtd: item.qtd, Data: item.data }
-            : { ID: item.id, Titulo: item.titulo, Data: item.data, Repeticao: item.notify_weekday, Descricao: item.desc, Notificar: item.notify ? 'Sim' : 'Não' }
-        );
+        const rows = items.map(item => {
+            if (activeTab === 'encomendas') return { ID: item.id, Loja: item.loja, Produto: item.produto, EAN: item.ean, Qtd: item.qtd, Data: item.data };
+            if (activeTab === 'reforco') return { ID: item.id, Loja: item.loja, Data: item.data, Grupo: item.grupo };
+            return { ID: item.id, Titulo: item.titulo, Data: item.data, Repeticao: item.notify_weekday, Descricao: item.desc, Notificar: item.notify ? 'Sim' : 'Não' };
+        });
 
         const ws = XLSX.utils.json_to_sheet(rows);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, activeTab === 'encomendas' ? 'Encomendas' : 'Observacoes');
+        let sheetName = activeTab === 'encomendas' ? 'Encomendas' : (activeTab === 'reforco' ? 'Reforco' : 'Observacoes');
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
         XLSX.writeFile(wb, `${activeTab}_${todayISO()}.xlsx`);
         showToast("📤 Exportado", "A planilha foi baixada com sucesso.", "#10b981");
     }
@@ -923,30 +930,47 @@ end $$;`;
         let snoozed = GM_getValue('tm_snoozed_notifications', {});
         let hasChanges = false;
 
-        const toNotify = db.observacoes.filter(o => {
-            if (!o.notify) return false;
+        db.observacoes.forEach((o, idx) => {
+            // Ignora se não tiver nem notificação nem auto-pin ativados
+            if (!o.notify && !o.auto_pin) return;
 
-            // Regra: Se a notificação for de uma data passada, desmarca sozinho.
+            // Regra: Se a data for passada, desmarca ambos automaticamente.
             if (!o.notify_weekday && o.data && o.data < todayStr) {
                 o.notify = false;
+                o.auto_pin = false;
                 hasChanges = true;
                 supaUpsert('observacoes', o);
-                return false;
+                return;
             }
 
-            if (snoozed[o.id] && now < snoozed[o.id]) return false; // Verifica se foi adiada
-            if (o.notify_weekday) return o.notify_weekday === todayWd;
-            return !o.data || o.data === todayStr;
+            // Verifica se hoje é o dia correto para o alerta/pin
+            let isToday = false;
+            if (o.notify_weekday) {
+                isToday = (o.notify_weekday === todayWd);
+            } else {
+                isToday = (!o.data || o.data === todayStr);
+            }
+
+            if (isToday) {
+                // ⏳ REGRA DO SNOOZE: Se foi adiado e o tempo não expirou, ignora a criação do Pin e do Toast
+                if (snoozed[o.id] && now < snoozed[o.id]) return;
+
+                // Ação 1: Auto-Fixar (Pin)
+                if (o.auto_pin) {
+                    setTimeout(() => createFloatingPin(o), idx * 100);
+                }
+
+                // Ação 2: Lembrete Flutuante Lateral (Toast)
+                if (o.notify) {
+                    setTimeout(() => showToast(`🔔 Lembrete: ${o.titulo}`, o.desc || '', '#f59e0b', { id: o.id, tab: 'observacoes' }), idx * 400);
+                }
+            }
         });
 
         if (hasChanges) {
             saveDB();
-            render(); // Atualiza visual caso um checkbox tenha desmarcado
+            render();
         }
-
-        toNotify.forEach((item, idx) => {
-            setTimeout(() => showToast(`🔔 Lembrete: ${item.titulo}`, item.desc || '', '#f59e0b', { id: item.id, tab: 'observacoes' }), idx * 400);
-        });
     }
 
     // --- Sistema Multifuncional de Análise de Trade (Local) ---
@@ -1061,9 +1085,53 @@ end $$;`;
     const contentArea = document.getElementById('tm-panel-content');
     const historyTitle = document.getElementById('tm-history-title');
 
+    function buildReforcoFormHTML() {
+        const itemEdit = editingId ? db.reforco.find(e => String(e.id) === String(editingId)) : null;
+        return `
+            <div class="tm-form">
+                <strong style="color:#a855f7;">${itemEdit ? 'Editar Reforço' : 'Novo Reforço'}</strong>
+                <input type="text" id="reforco-loja" placeholder="Nome da Loja" value="${itemEdit?.loja || ''}">
+                <input type="date" id="reforco-data" value="${itemEdit?.data || todayISO()}">
+                <textarea id="reforco-grupo" placeholder="Grupos..." rows="4" style="resize: vertical; font-family: inherit;">${itemEdit?.grupo || ''}</textarea>
+                <button id="reforco-submit">${itemEdit ? 'Salvar Alterações' : 'Registrar Reforço'}</button>
+                ${itemEdit ? '<button id="reforco-cancel" style="background:#64748b;">Cancelar</button>' : ''}
+            </div>` + (isExpanded ? '' : buildFilterBarHTML("Buscar por loja ou detalhes..."));
+    }
+
+    function buildReforcoListHTML() {
+        let listHTML = (isExpanded ? buildFilterBarHTML("Buscar por loja ou detalhes...") : '') +
+            `<div class="tm-list-container"><div class="tm-list-header"><label><input type="checkbox" id="tm-select-all"> Marcar Todos</label><button id="tm-delete-selected" class="tm-btn-small tm-btn-del" style="display:none;">Excluir Selecionados</button></div><div class="tm-list" id="tm-items-list">`;
+
+        if (db.reforco.length === 0) {
+            listHTML += '<p id="tm-empty-msg" style="text-align:center; color:#94a3b8; font-size:13px; margin-top:20px;">Nenhum reforço registrado.</p>';
+        } else {
+            db.reforco.forEach(item => {
+                const isChecked = selectedIds.has(String(item.id)) ? 'checked' : '';
+                let dataFormatada = item.data;
+                try { const [a, m, d] = String(item.data || '').split('-'); if (d) dataFormatada = `${d}/${m}/${a}`; } catch(e) {}
+
+                listHTML += `
+                    <div class="tm-card" data-id="${item.id}" style="border-left-color: #a855f7;">
+                        <input type="checkbox" class="tm-checkbox" data-id="${item.id}" ${isChecked}>
+                        <div class="tm-card-content">
+                            <h4>${item.loja || 'Sem loja'}</h4>
+                            ${item.data ? `<p><strong>Data:</strong> ${dataFormatada}</p>` : ''}
+                            ${item.grupo ? `<div style="margin-top: 8px; padding: 8px; background: #f8fafc; border-radius: 4px; border: 1px solid #e2e8f0; font-size: 13px; color: #475569; white-space: pre-wrap; word-break: break-word;"><strong>Grupos:</strong><br>${item.grupo}</div>` : ''}
+                            <div class="tm-card-actions" style="margin-top: 10px;">
+                                <button class="tm-btn-small tm-btn-edit" data-id="${item.id}">Editar</button>
+                                <button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">Excluir</button>
+                            </div>
+                        </div>
+                    </div>`;
+            });
+        }
+        return listHTML + '</div></div>';
+    }
+
     function render() {
         const isEnc = activeTab === 'encomendas';
         const isObs = activeTab === 'observacoes';
+        const isRef = activeTab === 'reforco';
         const isTrade = activeTab === 'trade';
         let formHTML = '', listHTML = '';
 
@@ -1071,6 +1139,8 @@ end $$;`;
             formHTML = buildEncFormHTML(); listHTML = buildEncListHTML(); historyTitle.textContent = 'Histórico de Encomendas';
         } else if (isObs) {
             formHTML = buildObsFormHTML(); listHTML = buildObsListHTML(); historyTitle.textContent = 'Histórico de Observações';
+        } else if (isRef) {
+            formHTML = buildReforcoFormHTML(); listHTML = buildReforcoListHTML(); historyTitle.textContent = 'Histórico de Reforço';
         } else if (isTrade) {
             formHTML = buildTradeFormHTML(); listHTML = ''; historyTitle.textContent = 'Análise de Trade';
         }
@@ -1094,7 +1164,6 @@ end $$;`;
                 if (countLojas) countLojas.textContent = `(${countNonEmptyLines(tl.value)})`;
                 if (countQtds) countQtds.textContent = `(${countNonEmptyLines(tq.value)})`;
 
-                // NOVO: Salva no cache sempre que você digitar qualquer coisa
                 GM_setValue('tm_trade_cache', {
                     lojas: tl.value,
                     qtds: tq.value,
@@ -1103,13 +1172,11 @@ end $$;`;
             };
 
             if (tl && tq) {
-                // Sincroniza Scroll do Trade
                 tl.addEventListener('scroll', () => { tq.scrollTop = tl.scrollTop; });
                 tq.addEventListener('scroll', () => { tl.scrollTop = tq.scrollTop; });
-                // Contagem de linhas preenchidas em cada coluna e auto-save
                 tl.addEventListener('input', updateCounts);
                 tq.addEventListener('input', updateCounts);
-                updateCounts(); // Executa na abertura para carregar as contagens
+                updateCounts();
             }
         }
     }
@@ -1118,7 +1185,7 @@ end $$;`;
     body.addEventListener('click', (e) => {
         const btnEdit = e.target.closest('.tm-btn-edit');
         if (btnEdit) { editingId = btnEdit.dataset.id; return render(); }
-        if (e.target.id === 'enc-cancel' || e.target.id === 'obs-cancel') { editingId = null; return render(); }
+        if (e.target.id === 'enc-cancel' || e.target.id === 'obs-cancel' || e.target.id === 'reforco-cancel') { editingId = null; return render(); }
 
         // Ação do Botão Fixar
         const btnPin = e.target.closest('.tm-btn-pin');
@@ -1172,20 +1239,38 @@ end $$;`;
             saveDB(); render(); supaUpsert('encomendas', record);
         }
 
-        if (e.target.id === 'obs-submit') {
+        if (e.target.id === 'reforco-submit') {
+            const loja = document.getElementById('reforco-loja').value.trim();
+            const data = document.getElementById('reforco-data').value || todayISO();
+            const grupo = document.getElementById('reforco-grupo').value.trim();
+            let record;
+            if (editingId) {
+                record = { id: editingId, loja, data, grupo };
+                const idx = db.reforco.findIndex(x => String(x.id) === String(editingId));
+                if (idx > -1) db.reforco[idx] = record;
+                editingId = null;
+            } else {
+                record = { id: generateUniqueId(), loja, data, grupo };
+                db.reforco.unshift(record);
+            }
+            saveDB(); render(); supaUpsert('reforco', record);
+        }
+
+       if (e.target.id === 'obs-submit') {
             const titulo = document.getElementById('obs-titulo').value.trim();
             const data = document.getElementById('obs-data').value || null;
             const notify_weekday = document.getElementById('obs-weekday').value || null;
             const desc = document.getElementById('obs-desc').value.trim();
             const notify = document.getElementById('obs-notify-now').checked;
+            const auto_pin = document.getElementById('obs-autopin-now').checked; // NOVO
             let record;
             if (editingId) {
-                record = { id: editingId, titulo, data, notify_weekday, desc, notify };
+                record = { id: editingId, titulo, data, notify_weekday, desc, notify, auto_pin }; // NOVO
                 const idx = db.observacoes.findIndex(x => String(x.id) === String(editingId));
                 if (idx > -1) db.observacoes[idx] = record;
                 editingId = null;
             } else {
-                record = { id: generateUniqueId(), titulo, data, notify_weekday, desc, notify };
+                record = { id: generateUniqueId(), titulo, data, notify_weekday, desc, notify, auto_pin }; // NOVO
                 db.observacoes.unshift(record);
             }
             saveDB(); render(); supaUpsert('observacoes', record);
@@ -1226,10 +1311,23 @@ end $$;`;
         }
         if (e.target.id === 'tm-toggle-undated') { hideUndated = e.target.checked; return render(); }
         if (e.target.id === 'tm-toggle-always-active') { showOnlyAlwaysActive = e.target.checked; return render(); }
-        if (e.target.classList.contains('tm-notify-check')) {
+       if (e.target.classList.contains('tm-notify-check')) {
             const id = String(e.target.dataset.id);
             const item = db.observacoes.find(o => String(o.id) === id);
             if (item) { item.notify = e.target.checked; saveDB(); supaUpsert('observacoes', item); }
+        }
+        if (e.target.classList.contains('tm-autopin-check')) {
+            const id = String(e.target.dataset.id);
+            const item = db.observacoes.find(o => String(o.id) === id);
+            if (item) {
+                item.auto_pin = e.target.checked;
+                saveDB();
+                supaUpsert('observacoes', item);
+                // Sincroniza visualmente os checkboxes do histórico e do pop-up para ficarem iguais
+                document.querySelectorAll(`.tm-autopin-check[data-id="${id}"]`).forEach(chk => {
+                    chk.checked = item.auto_pin;
+                });
+            }
         }
     });
 
@@ -1240,18 +1338,40 @@ end $$;`;
         const pin = document.createElement('div');
         pin.id = `tm-pin-${item.id}`;
         pin.className = 'tm-floating-pin';
-        pin.innerHTML = `
+       pin.innerHTML = `
             <div class="tm-pin-header" title="Clique e segure para arrastar">
                 <strong style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;">📌 ${item.titulo || 'Observação'}</strong>
                 <button class="tm-pin-close" title="Fechar">✕</button>
             </div>
             <div class="tm-pin-body">
                 <p>${item.desc ? item.desc : '<i>Sem detalhes informados...</i>'}</p>
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #fde68a; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                    <label style="font-size: 11.5px; color: #92400e; display: flex; align-items: center; gap: 4px; cursor: pointer; font-weight: 500;">
+                        <input type="checkbox" class="tm-autopin-check" data-id="${item.id}" ${item.auto_pin ? 'checked' : ''}> Auto-fixar ativado
+                    </label>
+                    <button class="tm-pin-snooze" style="background: #f59e0b; color: #fff; border: none; padding: 2px 6px; font-size: 11px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1" title="Adiar este registro por 4 horas">⏳ Adiar 4h</button>
+                </div>
             </div>
         `;
         document.body.appendChild(pin);
 
         pin.querySelector('.tm-pin-close').addEventListener('click', () => pin.remove());
+
+        // Lógica de adiamento (Snooze) do Pop-up Flutuante
+        const snoozeBtn = pin.querySelector('.tm-pin-snooze');
+        if (snoozeBtn) {
+            snoozeBtn.addEventListener('click', () => {
+                let snoozed = GM_getValue('tm_snoozed_notifications', {});
+                snoozed[item.id] = Date.now() + 4 * 60 * 60 * 1000; // Define o bloqueio por 4 horas
+                GM_setValue('tm_snoozed_notifications', snoozed);
+
+                pin.remove(); // Remove o pop-up da tela imediatamente
+
+                if (typeof showToast === 'function') {
+                    showToast("⏳ Adiado", "O registro foi ocultado e reaparecerá em 4 horas.", "#f59e0b");
+                }
+            });
+        }
 
         const header = pin.querySelector('.tm-pin-header');
         let isDragging = false, startX, startY, initialX, initialY;
@@ -1337,7 +1457,7 @@ end $$;`;
                             <p><strong>Produto:</strong> ${item.produto || '-'} (x${item.qtd || '0'})</p>
                             ${item.ean ? `<p><strong>EAN:</strong> ${item.ean}</p>` : ''}
                             ${item.data ? `<p><strong>Data:</strong> ${dataFormatada}</p>` : ''}
-                            <div class="tm-card-actions"><button class="tm-btn-small tm-btn-edit" data-id="${item.id}">✏️</button><button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">🗑️</button></div>
+                            <div class="tm-card-actions"><button class="tm-btn-small tm-btn-edit" data-id="${item.id}">Editar</button><button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">Excluir</button></div>
                         </div>
                     </div>`;
             });
@@ -1358,8 +1478,9 @@ end $$;`;
                     <option value="">Sem repetição semanal</option>
                     ${WEEKDAYS.map(wd => `<option value="${wd}" ${itemEdit?.notify_weekday === wd ? 'selected' : ''}>Repetir toda ${WEEKDAY_LABELS[wd]}</option>`).join('')}
                 </select>
-                <textarea id="obs-desc" placeholder="Detalhes..." rows="2">${itemEdit?.desc || ''}</textarea>
+              <textarea id="obs-desc" placeholder="Detalhes..." rows="2">${itemEdit?.desc || ''}</textarea>
                 <label style="display:flex; gap:8px; font-size:13px; color:#475569; cursor:pointer;"><input type="checkbox" id="obs-notify-now" ${itemEdit?.notify ? 'checked' : ''}>Ativar notificação / Lembrete</label>
+                <label style="display:flex; gap:8px; font-size:13px; color:#475569; cursor:pointer; margin-bottom: 4px;"><input type="checkbox" id="obs-autopin-now" ${itemEdit?.auto_pin ? 'checked' : ''}>📌 Fixar (Pin) no dia agendado</label>
                 <button id="obs-submit" style="background:#f59e0b; color:#fff;">${itemEdit ? 'Salvar Alterações' : 'Registrar Observação'}</button>
                 ${itemEdit ? '<button id="obs-cancel" style="background:#64748b;">Cancelar</button>' : ''}
             </div>` + (isExpanded ? '' : buildFilterBarHTML("Buscar por título ou descrição..."));
@@ -1394,10 +1515,15 @@ end $$;`;
                             <h4 style="padding-right:20px;">${item.titulo || 'Sem Assunto'}</h4>
                             ${item.notify_weekday ? `<p><strong>Repetição:</strong> Toda ${WEEKDAY_LABELS[item.notify_weekday]}</p>` : `<p><strong>Data:</strong> ${dataFormatada || 'Sempre ativo'}</p>`}
                             ${item.desc ? `<p><strong>Obs:</strong> ${item.desc}</p>` : ''}
-                            <div class="tm-card-actions">
-                                <button class="tm-btn-small tm-btn-pin" data-id="${item.id}" style="background-color: #8b5cf6;" title="Fixar na tela">📌</button>
-                                <button class="tm-btn-small tm-btn-edit" data-id="${item.id}">✏️</button>
-                                <button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">🗑️</button>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                                <label style="font-size: 11px; color: #64748b; display: flex; align-items: center; gap: 4px; cursor: pointer; font-weight: 500;" title="Ativar/Desativar Fixar">
+                                    <input type="checkbox" class="tm-autopin-check" data-id="${item.id}" ${item.auto_pin ? 'checked' : ''}>📌 Fixar
+                                </label>
+                                <div class="tm-card-actions" style="margin-top: 0;">
+                                    <button class="tm-btn-small tm-btn-pin" data-id="${item.id}" style="background-color: #8b5cf6;" title="Abrir na tela">Abrir</button>
+                                    <button class="tm-btn-small tm-btn-edit" data-id="${item.id}">Editar</button>
+                                    <button class="tm-btn-small tm-btn-del single-delete" data-id="${item.id}">Excluir</button>
+                                </div>
                             </div>
                         </div>
                     </div>`;
@@ -1482,17 +1608,19 @@ end $$;`;
                 const isSempreAtivo = !hasDate && !(item && item.notify_weekday);
                 if (!isSempreAtivo) visible = false;
             } else {
-                // Lógica de Datas Original
-                if (!hasDate) {
-                    if (hideUndated) visible = false;
-                } else if (visible && item && (dateFrom || dateTo)) {
+                // Ajuste aqui: Identifica estritamente o que é um item "Sempre Ativo"
+                const isSempreAtivo = !hasDate && !(item && item.notify_weekday);
+
+                if (isSempreAtivo) {
+                    if (hideUndated) visible = false; // Oculta apenas se for Sempre Ativo legítimo
+                } else if (hasDate && visible && (dateFrom || dateTo)) {
+                    // Filtro de intervalo de datas aplicado apenas a registros com data fixa
                     const d = item.data || '';
-                    if (!d) { visible = false; }
-                    else {
-                        if (dateFrom && d < dateFrom) visible = false;
-                        if (dateTo && d > dateTo) visible = false;
-                    }
+                    if (dateFrom && d < dateFrom) visible = false;
+                    if (dateTo && d > dateTo) visible = false;
                 }
+                // Itens marcados para repetição semanal (!hasDate && notify_weekday)
+                // agora ignoram o "hideUndated" e permanecem sempre visíveis.
             }
 
             card.style.display = visible ? 'flex' : 'none';
